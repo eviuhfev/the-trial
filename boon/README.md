@@ -6,7 +6,12 @@ It is a single static page (`index.html`) with no build step and no server.
 ## Run it
 
 1. Get a free OpenRouter key at <https://openrouter.ai/keys> (no card needed).
-2. Open `boon/index.html` in a browser, or host the folder anywhere static (GitHub Pages works).
+2. Serve it locally on port 6999 from the repo root, then open <http://localhost:6999>:
+   ```sh
+   python -m http.server 6999 --bind 127.0.0.1 --directory boon
+   # or: npx serve -l 6999 boon
+   ```
+   Opening `boon/index.html` directly or hosting the folder anywhere static (GitHub Pages) also works.
 3. Paste the key and your name into Settings. The key is kept in your browser's localStorage only.
 
 ## Models
