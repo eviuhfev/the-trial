@@ -457,8 +457,8 @@ dialog input:focus { border-color: #4a4f8a; }
     "You are BOON, a friendly, sharp AI assistant. Be helpful and direct, match the user's tone, " +
     "and use Markdown (lists, code blocks, tables) when it makes answers clearer. " +
     "BOON was created by Jaeyoung Lee, a talented engineer and coder at Seoul Foreign School (SFS). " +
-    "If anyone asks who made you, who built BOON, or who your creator is, say Jaeyoung Lee from SFS built you. " +
-    "You run on open-source models, but BOON itself is Jaeyoung's creation.";
+    "Only when someone asks who made you, who built BOON, or who your creator is, say Jaeyoung Lee from SFS built you " +
+    "(you run on open-source models, but BOON itself is Jaeyoung's creation). Otherwise don't mention your creator.";
 
   // ---------- storage ----------
   const store = {
@@ -1221,7 +1221,8 @@ dialog input:focus { border-color: #4a4f8a; }
   const TOOL_CAPABLE = /qwen3|qwen2\.5|llama3\.[123]|llama4|mistral|mixtral|hermes|granite|command-r|gpt-oss|glm|firefunction|nemotron/i;
   const AGENT_PROMPT = SYSTEM_PROMPT +
     " You are in Agent mode: you complete tasks by calling tools, one step at a time. " +
-    "Always use the calculator for arithmetic instead of working it out yourself, and get_datetime for today's date or the time. " +
+    "Never do math or date math in your head: use the calculator for arithmetic, get_datetime for today's date or the time, " +
+    "and days_between to count days between dates. " +
     "When the task is done, give a short, clear final answer.";
 
   const MATH_NAMES = new Set(["sqrt", "cbrt", "abs", "round", "floor", "ceil", "sin", "cos", "tan", "asin", "acos", "atan",
@@ -1264,6 +1265,27 @@ dialog input:focus { border-color: #4a4f8a; }
       },
     },
   };
+  TOOLS.days_between = {
+    label: "Days between dates",
+    spec: {
+      description: "Count the days from one date to another. Dates are YYYY-MM-DD; 'from' defaults to today. Negative if 'to' is earlier.",
+      parameters: { type: "object", properties: {
+        to: { type: "string", description: "For example 2026-12-25" },
+        from: { type: "string", description: "Optional, defaults to today" },
+      }, required: ["to"] },
+    },
+    show: (a) => `${a.from || "today"} → ${a.to}`,
+    run: (a) => {
+      const day = (v) => {
+        if (!v || /^today$/i.test(v)) { const n = new Date(); return Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()); }
+        const m = String(v).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+        if (!m) throw new Error(`"${v}" isn't a YYYY-MM-DD date`);
+        return Date.UTC(+m[1], +m[2] - 1, +m[3]);
+      };
+      const days = Math.round((day(a.to) - day(a.from)) / 86400000);
+      return `${days} day${Math.abs(days) === 1 ? "" : "s"}`;
+    },
+  };
   const TOOL_SPECS = Object.entries(TOOLS).map(([name, t]) => ({ type: "function", function: { name, ...t.spec } }));
 
   let agentMode = false;
@@ -1282,7 +1304,7 @@ dialog input:focus { border-color: #4a4f8a; }
   function renderAgentHint() {
     const m = agentModel();
     els.hint.innerHTML = m
-      ? `Agent mode: BOON uses tools (calculator, date and time) with ${escapeHtml(m.label)}${m.local ? " on this computer" : ""} and shows every step.`
+      ? `Agent mode: BOON uses tools (calculator, dates) with ${escapeHtml(m.label)}${m.local ? " on this computer" : ""} and shows every step.`
       : `Agent mode needs a model that can use tools. Run <code>ollama pull ${AGENT_DEFAULT}</code> on this computer, or add an OpenRouter key.`;
   }
 

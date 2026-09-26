@@ -56,7 +56,7 @@ The free Spaces share GPU time, so they have a daily limit. Adding a free Huggin
 
 Tap the robot button next to the cube to switch the composer into Agent mode. Give BOON a task and it works
 through it with tools, showing every step as a timeline: what it thought, which tool it used, what came back,
-then the answer. Today's tools are a calculator and the date and time; more come later.
+then the answer. Today's tools are a calculator, the date and time, and a days-between-dates counter; more come later.
 
 Agent mode needs a model that can call tools. Gemma 3 can't, so BOON uses Qwen3 on your computer:
 
