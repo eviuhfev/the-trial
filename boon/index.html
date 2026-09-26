@@ -457,8 +457,8 @@ dialog input:focus { border-color: #4a4f8a; }
     "You are BOON, a friendly, sharp AI assistant. Be helpful and direct, match the user's tone, " +
     "and use Markdown (lists, code blocks, tables) when it makes answers clearer. " +
     "BOON was created by Jaeyoung Lee, a talented engineer and coder at Seoul Foreign School (SFS). " +
-    "Only when someone asks who made you, who built BOON, or who your creator is, say Jaeyoung Lee from SFS built you " +
-    "(you run on open-source models, but BOON itself is Jaeyoung's creation). Otherwise don't mention your creator.";
+    "Only when someone asks who made you, who built BOON, or who your creator is, answer that Jaeyoung Lee from SFS built you. " +
+    "Otherwise don't mention your creator.";
 
   // ---------- storage ----------
   const store = {
@@ -1219,6 +1219,14 @@ dialog input:focus { border-color: #4a4f8a; }
   const AGENT_MAX_STEPS = 20;
   const AGENT_DEFAULT = "qwen3:8b";
   const TOOL_CAPABLE = /qwen3|qwen2\.5|llama3\.[123]|llama4|mistral|mixtral|hermes|granite|command-r|gpt-oss|glm|firefunction|nemotron/i;
+  // Built per task so the date is always current; without it the model guesses dates from its training years.
+  const agentPrompt = () => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    return AGENT_PROMPT + ` Today is ${now.toLocaleDateString("en-US", { weekday: "long" })} ${today}` +
+      ` (time zone ${Intl.DateTimeFormat().resolvedOptions().timeZone}). For holidays and events, use the next upcoming date.`;
+  };
   const AGENT_PROMPT = SYSTEM_PROMPT +
     " You are in Agent mode: you complete tasks by calling tools, one step at a time. " +
     "Never do math or date math in your head: use the calculator for arithmetic, get_datetime for today's date or the time, " +
@@ -1268,7 +1276,7 @@ dialog input:focus { border-color: #4a4f8a; }
   TOOLS.days_between = {
     label: "Days between dates",
     spec: {
-      description: "Count the days from one date to another. Dates are YYYY-MM-DD; 'from' defaults to today. Negative if 'to' is earlier.",
+      description: "Count the days from one date to another. Dates are YYYY-MM-DD. Leave 'from' out to count from today. Negative if 'to' is earlier.",
       parameters: { type: "object", properties: {
         to: { type: "string", description: "For example 2026-12-25" },
         from: { type: "string", description: "Optional, defaults to today" },
@@ -1423,7 +1431,7 @@ dialog input:focus { border-color: #4a4f8a; }
     renderThread();
     renderList();
 
-    const messages = [{ role: "system", content: AGENT_PROMPT }, ...past, { role: "user", content: text }];
+    const messages = [{ role: "system", content: agentPrompt() }, ...past, { role: "user", content: text }];
     const started = Date.now();
     setBusy(true);
     controller = new AbortController();
