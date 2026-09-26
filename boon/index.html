@@ -345,7 +345,7 @@ dialog input:focus { border-color: #4a4f8a; }
 <dialog id="settings">
   <form method="dialog" id="settingsForm">
     <h2>Settings</h2>
-    <p>BOON runs free open-weights models through OpenRouter. Get a free key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a> (no card needed) and paste it below. It stays in this browser only.</p>
+    <p>BOON runs open-source models two ways. On this computer: install <a href="https://ollama.com/download" target="_blank" rel="noopener">Ollama</a>, pull a model (for example <code>ollama pull gemma3</code>), and it shows up in the model picker with no key. In the cloud: get a free key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a> (no card needed) and paste it below. The key stays in this browser only.</p>
     <label for="keyInput">OpenRouter API key</label>
     <input id="keyInput" type="password" autocomplete="off" placeholder="sk-or-v1-..." />
     <label for="nameInput">Your name</label>
@@ -363,6 +363,10 @@ dialog input:focus { border-color: #4a4f8a; }
 
   const API = "https://openrouter.ai/api/v1";
   const FALLBACK_MODEL = "openrouter/free";
+  // Ollama (github.com/ollama/ollama) runs open-source models on this computer, no key needed.
+  const OLLAMA = "http://localhost:11434";
+  const LOCAL = "ollama:";
+  const isLocal = (id) => id.startsWith(LOCAL);
 
   // Hand-picked free, open-weights models, strongest first. The live list from
   // OpenRouter decides which of these are still offered; if it can't be loaded
@@ -389,7 +393,9 @@ dialog input:focus { border-color: #4a4f8a; }
   let currentId = null;
   let pending = [];           // attachments waiting to be sent
   let controller = null;      // AbortController for the running request
-  let models = CURATED.slice();
+  let cloudModels = CURATED.slice();
+  let localModels = [];
+  let models = cloudModels;
 
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -419,28 +425,51 @@ dialog input:focus { border-color: #4a4f8a; }
   }
 
   function renderHint() {
-    els.hint.innerHTML = store.get("key", "")
-      ? "Free open-weights models via OpenRouter. Answers can be wrong."
-      : `Add a free <a href="#" id="hintKey">OpenRouter key</a> to start chatting.`;
+    const sel = models.find((m) => m.id === els.modelSelect.value);
+    els.hint.innerHTML = sel && sel.local
+      ? `Running ${escapeHtml(sel.label)} on this computer with Ollama. Answers can be wrong.`
+      : store.get("key", "")
+        ? "Free open-weights models via OpenRouter. Answers can be wrong."
+        : `Add a free <a href="#" id="hintKey">OpenRouter key</a> or pick a model on this computer to start chatting.`;
     const k = document.getElementById("hintKey");
     if (k) k.onclick = (e) => { e.preventDefault(); openSettings(); };
   }
 
   // ---------- models ----------
   function renderModels() {
-    const chosen = store.get("model", CURATED[0].id);
+    models = [...localModels, ...cloudModels];
+    const chosen = store.get("model", localModels[0]?.id || CURATED[0].id);
     const sel = els.modelSelect;
     sel.innerHTML = "";
-    const top = models.filter((m) => m.curated !== false);
-    const rest = models.filter((m) => m.curated === false);
-    for (const m of top) sel.add(new Option(m.label, m.id));
-    if (rest.length) {
+    const group = (label, list) => {
+      if (!list.length) return;
       const g = document.createElement("optgroup");
-      g.label = "More free models";
-      for (const m of rest) g.appendChild(new Option(m.label, m.id));
+      g.label = label;
+      for (const m of list) g.appendChild(new Option(m.label, m.id));
       sel.appendChild(g);
-    }
-    sel.value = models.some((m) => m.id === chosen) ? chosen : models[0].id;
+    };
+    group("On this computer", localModels);
+    group("Free cloud (OpenRouter)", cloudModels.filter((m) => m.curated !== false));
+    group("More free cloud models", cloudModels.filter((m) => m.curated === false));
+    sel.value = models.some((m) => m.id === chosen) ? chosen : (localModels[0] || models[0]).id;
+    renderHint();
+  }
+
+  async function loadLocalModels() {
+    try {
+      const res = await fetch(OLLAMA + "/api/tags");
+      if (!res.ok) return;
+      const { models: list = [] } = await res.json();
+      localModels = list
+        .filter((m) => !/embed/i.test(m.name))
+        .map((m) => ({
+          id: LOCAL + m.name,
+          label: m.name.replace(/:latest$/, ""),
+          local: true,
+          vision: /gemma[34]|llava|vision|vl\b|minicpm-v|llama4|mistral-small3/i.test(m.name),
+        }));
+      renderModels();
+    } catch { /* Ollama not installed or not running */ }
   }
 
   async function loadLiveModels() {
@@ -458,7 +487,7 @@ dialog input:focus { border-color: #4a4f8a; }
         .filter((m) => !CURATED.some((c) => c.id === m.id))
         .map((m) => ({ id: m.id, label: m.name.replace(/\s*\(free\)\s*$/i, ""), vision: vision(m), curated: false }))
         .sort((a, b) => a.label.localeCompare(b.label));
-      models = [...top, ...rest];
+      cloudModels = [...top, ...rest];
       renderModels();
     } catch { /* offline or blocked: keep the curated list */ }
   }
@@ -633,8 +662,8 @@ dialog input:focus { border-color: #4a4f8a; }
 
   async function send(text) {
     const key = store.get("key", "");
-    if (!key) { openSettings(); return; }
     if (!text && !pending.length) return;
+    if (!key && !isLocal(els.modelSelect.value)) { openSettings(); return; }
 
     let chat = current();
     if (!chat) {
@@ -658,7 +687,7 @@ dialog input:focus { border-color: #4a4f8a; }
     const info = models.find((m) => m.id === model);
     let note = "";
     if (hasImage && info && !info.vision) {
-      const v = models.find((m) => m.vision);
+      const v = models.find((m) => m.vision && (m.local || key));
       if (v) { model = v.id; note = `switched to ${v.label} to read the image`; }
     }
 
@@ -678,7 +707,7 @@ dialog input:focus { border-color: #4a4f8a; }
         await stream(model, history, key, bot, body);
       } catch (err) {
         // Free models get rate-limited or retired often; retry once on the auto router.
-        if (err.retryable && model !== FALLBACK_MODEL && !bot.content) {
+        if (err.retryable && !isLocal(model) && model !== FALLBACK_MODEL && !bot.content) {
           note = `${info?.label || model} was busy, answered by the free auto router`;
           model = bot.model = FALLBACK_MODEL;
           bot.reasoning = "";
@@ -706,18 +735,30 @@ dialog input:focus { border-color: #4a4f8a; }
   }
 
   async function stream(model, messages, key, bot, body) {
-    const res = await fetch(API + "/chat/completions", {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + key,
-        "HTTP-Referer": location.origin && location.origin !== "null" ? location.origin : "https://github.com/eviuhfev/the-trial",
-        "X-Title": "BOON",
-      },
-      body: JSON.stringify({ model, messages, stream: true }),
-    });
+    const local = isLocal(model);
+    let res;
+    try {
+      res = await fetch(local ? OLLAMA + "/v1/chat/completions" : API + "/chat/completions", {
+        method: "POST",
+        signal: controller.signal,
+        headers: local ? { "Content-Type": "application/json" } : {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + key,
+          "HTTP-Referer": location.origin && location.origin !== "null" ? location.origin : "https://github.com/eviuhfev/the-trial",
+          "X-Title": "BOON",
+        },
+        body: JSON.stringify({ model: local ? model.slice(LOCAL.length) : model, messages, stream: true }),
+      });
+    } catch (err) {
+      if (local && err.name !== "AbortError") throw new Error("Couldn't reach Ollama on this computer. Make sure the Ollama app is running, then try again.");
+      throw err;
+    }
 
+    if (!res.ok && local) {
+      let msg = `Ollama returned an error (${res.status})`;
+      try { const j = await res.json(); if (j.error?.message || j.error) msg = j.error.message || j.error; } catch {}
+      throw new Error(msg);
+    }
     if (!res.ok) {
       let msg = `Request failed (${res.status})`;
       try { const j = await res.json(); if (j.error?.message) msg = j.error.message; } catch {}
@@ -803,7 +844,7 @@ dialog input:focus { border-color: #4a4f8a; }
   els.stopBtn.onclick = () => controller && controller.abort();
   els.newChat.onclick = newChat;
   els.search.addEventListener("input", renderList);
-  els.modelSelect.addEventListener("change", () => store.set("model", els.modelSelect.value));
+  els.modelSelect.addEventListener("change", () => { store.set("model", els.modelSelect.value); renderHint(); });
   els.attachBtn.onclick = () => els.fileInput.click();
   els.fileInput.onchange = async () => {
     for (const f of els.fileInput.files) {
@@ -822,7 +863,9 @@ dialog input:focus { border-color: #4a4f8a; }
   renderList();
   renderThread();
   loadLiveModels();
-  if (!store.get("key", "")) setTimeout(openSettings, 300);
+  loadLocalModels().then(() => {
+    if (!store.get("key", "") && !localModels.length) openSettings();
+  });
 })();
 </script>
 </body>

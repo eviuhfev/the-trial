@@ -1,22 +1,31 @@
 # BOON
 
-A chat app that talks to free, open-weights AI models through [OpenRouter](https://openrouter.ai).
-It is a single static page (`index.html`) with no build step and no server.
+A chat app for open-source AI models. It runs them either on your own computer with
+[Ollama](https://github.com/ollama/ollama) (no key, nothing leaves your machine) or free in the cloud
+through [OpenRouter](https://openrouter.ai). It is a single static page (`index.html`) with no build step.
+
+## Run a model on your computer (no key)
+
+1. Install Ollama from <https://ollama.com/download>.
+2. Pull an open-source model, e.g. `ollama pull gemma3` (Google's open Gemma 3; pick a size your GPU fits,
+   such as `gemma3:4b`, `gemma3:12b` or `gemma3:27b`).
+3. Serve BOON (below) and open it. Every model Ollama has installed appears under "On this computer"
+   in the model picker and is picked by default.
 
 ## Run it
 
-1. Get a free OpenRouter key at <https://openrouter.ai/keys> (no card needed).
+1. For cloud models, get a free OpenRouter key at <https://openrouter.ai/keys> (no card needed).
 2. Serve it locally on port 6999 from the repo root, then open <http://localhost:6999>:
    ```sh
    python -m http.server 6999 --bind 127.0.0.1 --directory boon
    # or: npx serve -l 6999 boon
    ```
    Opening `boon/index.html` directly or hosting the folder anywhere static (GitHub Pages) also works.
-3. Paste the key and your name into Settings. The key is kept in your browser's localStorage only.
+3. Paste the key (if using cloud models) and your name into Settings. The key is kept in your browser's localStorage only.
 
-## Models
+## Cloud models
 
-The picker defaults to **GLM-5.2** (Z.ai, MIT-licensed open weights), one of the strongest
+Without a local model, the picker defaults to **GLM-5.2** (Z.ai, MIT-licensed open weights), one of the strongest
 open-weights models on OpenRouter's free list (it scores 34 on the Artificial Analysis Intelligence
 Index, against 23 for Nemotron 3 Ultra). Also listed:
 Qwen 3.8, Nemotron 3 Ultra, Gemma 4 (reads images) and **Auto**, OpenRouter's router across all
