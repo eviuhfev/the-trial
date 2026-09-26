@@ -388,7 +388,7 @@ dialog input:focus { border-color: #4a4f8a; }
     <input id="keyInput" type="password" autocomplete="off" placeholder="sk-or-v1-..." />
     <label for="nameInput">Your name</label>
     <input id="nameInput" type="text" placeholder="Jaeyoung Lee" />
-    <label for="hfInput">Hugging Face token (optional, raises the free 3D limit)</label>
+    <label for="hfInput">Hugging Face token for images and 3D (free: <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a>, "Read" access)</label>
     <input id="hfInput" type="password" autocomplete="off" placeholder="hf_..." />
     <label for="pollenInput">Pollinations key (optional backup for images)</label>
     <input id="pollenInput" type="password" autocomplete="off" placeholder="From enter.pollinations.ai" />
@@ -871,6 +871,18 @@ dialog input:focus { border-color: #4a4f8a; }
   const POLLINATIONS = "https://gen.pollinations.ai/image/";
   // Gradio returns either FileData ({url}) or an update wrapper ({value: {url}}).
   const fileUrl = (x) => (typeof x === "string" ? x : x?.url || x?.value?.url || null);
+  // @gradio/client sends credentials: "include", but Spaces answer CORS preflights without
+  // Access-Control-Allow-Credentials, so browsers block every call. BOON needs no cookies
+  // (a token goes in the Authorization header), so drop credentials for *.hf.space.
+  // stream() passes Request objects to the global fetch, so both call shapes are handled.
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const url = typeof input === "string" ? input : input?.url || String(input);
+    if (!/\.hf\.space\//.test(url)) return nativeFetch(input, init);
+    return input instanceof Request
+      ? nativeFetch(new Request(input, { ...init, credentials: "omit" }))
+      : nativeFetch(input, { ...init, credentials: "omit" });
+  };
   let gradio;
   const loadGradio = async () => (gradio ||= await import(GRADIO));
   const connect = async (id) => {
@@ -949,11 +961,13 @@ dialog input:focus { border-color: #4a4f8a; }
   function fillCreation(body, m) {
     body.dataset.mid = m.id;
     const model = liveModels.get(m.id) || m.model3d;
+    const quota = m.error?.startsWith("QUOTA:");
+    const errText = quota ? m.error.slice(6) : m.error;
     let frame;
     if (m.status) frame = `<div class="loading"><span class="spinner"></span><span>${escapeHtml(m.status)}</span></div>`;
     else if (model) frame = `<model-viewer src="${escapeHtml(model)}" camera-controls auto-rotate shadow-intensity="1" exposure="1.1" alt="3D model of ${escapeHtml(m.prompt || "the image")}"></model-viewer>`;
     else if (m.image) frame = `<img alt="${escapeHtml(m.prompt || "Image")}" src="${escapeHtml(m.image)}">`;
-    else frame = `<div class="loading">${escapeHtml(m.error || "No image yet.")}</div>`;
+    else frame = `<div class="loading">${escapeHtml(errText || "No image yet.")}</div>`;
 
     const busy = !!m.status;
     let actions = "";
@@ -964,13 +978,14 @@ dialog input:focus { border-color: #4a4f8a; }
       if (model) actions += `<button class="chip-btn" data-act="save">Download .glb</button>`;
     }
     if (!m.image && !busy && m.prompt) actions = `<button class="chip-btn primary" data-act="retry">Try again</button>`;
+    if (quota && !busy) actions = `<button class="chip-btn primary" data-act="settings">Add Hugging Face token</button>` + actions.replace(" primary", "");
     if (m.model3d && !busy && m.showImage) actions = `<button class="chip-btn primary" data-act="show3d">Show 3D model</button><button class="chip-btn" data-act="save">Download .glb</button>`;
 
     const showImg = m.showImage && m.image;
     body.innerHTML = `<div class="creation">
       <div class="prompt">${escapeHtml(m.prompt ? "“" + m.prompt + "”" : "Your image")}</div>
       <div class="frame">${showImg ? `<img alt="${escapeHtml(m.prompt || "Image")}" src="${escapeHtml(m.image)}">` : frame}</div>
-      ${m.error && m.image ? `<div class="error">${escapeHtml(m.error)}</div>` : ""}
+      ${m.error && m.image ? `<div class="error">${escapeHtml(errText)}</div>` : ""}
       ${actions ? `<div class="actions">${actions}</div>` : ""}
       ${m.note ? `<div class="meta">${escapeHtml(m.note)}</div>` : ""}
     </div>`;
@@ -990,6 +1005,7 @@ dialog input:focus { border-color: #4a4f8a; }
         if (act === "show3d") { m.showImage = false; rerender(m); }
         if (act === "save") saveModel(m);
         if (act === "retry") makeImage(m);
+        if (act === "settings") openSettings();
       };
     });
   }
@@ -1069,7 +1085,7 @@ dialog input:focus { border-color: #4a4f8a; }
     // Gradio rejects with plain status objects ({stage: "error", message}) as well as Errors.
     const msg = err?.message || (err && typeof err === "object" ? JSON.stringify(err).slice(0, 200) : String(err || ""));
     if (/quota|exceeded|limit/i.test(msg)) {
-      return "The free AI servers have hit their limit for now. Try again later, or add a free Hugging Face token in Settings.";
+      return "QUOTA:The free AI servers only give each visitor a little GPU time, and it's used up. Add a free Hugging Face token in Settings to keep going.";
     }
     if (/failed to fetch|networkerror|load failed/i.test(msg)) return `${lead}. Check your internet connection and try again. (${msg})`;
     return `${lead}${msg ? ": " + msg : "."}`;
