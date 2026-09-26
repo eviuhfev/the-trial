@@ -46,7 +46,8 @@ models on free Hugging Face Spaces, so no key is needed.
    adds a backup image source.
 2. Tap **Make 3D model** and BOON turns the image into a mesh with [Hunyuan3D-2](https://github.com/Tencent/Hunyuan3D-2)
    (Hunyuan3D-2.1 as backup). It removes the background itself; an object on a plain background works best.
-3. The result shows in a 3D viewer you can drag to spin. **Download .glb** saves it for Blender, games or 3D printing.
+3. The result shows in a 3D viewer you can drag to spin. **Download .stl (3D print)** saves a slicer-ready STL, stood
+   upright with its longest side scaled to 100 mm (resize it in your slicer). **Download .glb** saves the original for Blender or games.
    The mesh is untextured (white).
 
 The free Spaces share GPU time, so they have a daily limit. Adding a free Hugging Face token in Settings raises it.

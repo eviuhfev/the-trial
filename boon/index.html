@@ -9,6 +9,12 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
 <script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <style>
@@ -975,11 +981,11 @@ dialog input:focus { border-color: #4a4f8a; }
       actions += model
         ? `<button class="chip-btn" data-act="image">Show image</button>`
         : `<button class="chip-btn primary" data-act="3d">Make 3D model</button>`;
-      if (model) actions += `<button class="chip-btn" data-act="save">Download .glb</button>`;
+      if (model) actions += `<button class="chip-btn" data-act="stl">Download .stl (3D print)</button><button class="chip-btn" data-act="save">Download .glb</button>`;
     }
     if (!m.image && !busy && m.prompt) actions = `<button class="chip-btn primary" data-act="retry">Try again</button>`;
     if (quota && !busy) actions = `<button class="chip-btn primary" data-act="settings">Add Hugging Face token</button>` + actions.replace(" primary", "");
-    if (m.model3d && !busy && m.showImage) actions = `<button class="chip-btn primary" data-act="show3d">Show 3D model</button><button class="chip-btn" data-act="save">Download .glb</button>`;
+    if (m.model3d && !busy && m.showImage) actions = `<button class="chip-btn primary" data-act="show3d">Show 3D model</button><button class="chip-btn" data-act="stl">Download .stl (3D print)</button><button class="chip-btn" data-act="save">Download .glb</button>`;
 
     const showImg = m.showImage && m.image;
     body.innerHTML = `<div class="creation">
@@ -1004,23 +1010,64 @@ dialog input:focus { border-color: #4a4f8a; }
         if (act === "image") { m.showImage = true; rerender(m); }
         if (act === "show3d") { m.showImage = false; rerender(m); }
         if (act === "save") saveModel(m);
+        if (act === "stl") saveStl(m, b);
         if (act === "retry") makeImage(m);
         if (act === "settings") openSettings();
       };
     });
   }
 
+  const fileBase = (m) => (m.prompt || "boon-model").replace(/[^\w -]+/g, "").trim().slice(0, 40).replace(/\s+/g, "-") || "boon-model";
+
+  function downloadBlob(blob, name) {
+    const a = document.createElement("a");
+    a.download = name;
+    a.href = URL.createObjectURL(blob);
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+
   async function saveModel(m) {
     const src = liveModels.get(m.id) || m.model3d;
     if (!src) return;
-    const a = document.createElement("a");
-    a.download = (m.prompt || "boon-model").replace(/[^\w -]+/g, "").trim().slice(0, 40).replace(/\s+/g, "-") + ".glb";
-    a.href = src;
-    if (!src.startsWith("blob:")) {
-      try { a.href = URL.createObjectURL(await (await fetch(src)).blob()); } catch {}
-    }
-    document.body.appendChild(a); a.click(); a.remove();
+    try { downloadBlob(await (await fetch(src)).blob(), fileBase(m) + ".glb"); }
+    catch { m.error = "Couldn't download the model. Make it again and retry."; rerender(m); }
   }
+
+  // Slicers want STL in millimetres with Z up. glTF is Y-up with no real units, so stand the
+  // model upright and scale its longest side to 100 mm; resize it in the slicer as needed.
+  async function saveStl(m, button) {
+    const src = liveModels.get(m.id) || m.model3d;
+    if (!src) return;
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = "Converting…";
+    try {
+      const [THREE, { GLTFLoader }, { STLExporter }] = await Promise.all([
+        import("three"),
+        import("three/addons/loaders/GLTFLoader.js"),
+        import("three/addons/exporters/STLExporter.js"),
+      ]);
+      const gltf = await new GLTFLoader().loadAsync(src);
+      const root = gltf.scene;
+      root.rotation.x = Math.PI / 2;
+      root.updateMatrixWorld(true);
+      const size = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3());
+      const longest = Math.max(size.x, size.y, size.z) || 1;
+      root.scale.setScalar(100 / longest);
+      root.updateMatrixWorld(true);
+      const stl = new STLExporter().parse(root, { binary: true });
+      downloadBlob(new Blob([stl], { type: "model/stl" }), fileBase(m) + ".stl");
+    } catch (err) {
+      console.error("BOON stl:", err);
+      m.error = "Couldn't convert the model to STL. Download the .glb and convert it in Blender instead.";
+      rerender(m);
+    } finally {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
+
 
   function chatOf(m) { return chats.find((c) => c.messages.includes(m)); }
   function touch(m) { const c = chatOf(m); if (c) { c.updated = Date.now(); saveChats(); } }
