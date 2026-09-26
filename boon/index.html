@@ -1247,6 +1247,7 @@ dialog input:focus { border-color: #4a4f8a; }
     });
     const value = Function(`"use strict"; return (${expr});`)();
     if (typeof value !== "number" || Number.isNaN(value)) throw new Error("that isn't a number");
+    if (!Number.isFinite(value)) throw new Error("the answer is undefined (division by zero or too large)");
     return Number.isInteger(value) ? String(value) : String(+value.toPrecision(12));
   }
 
@@ -1273,6 +1274,14 @@ dialog input:focus { border-color: #4a4f8a; }
       },
     },
   };
+  // Strict YYYY-MM-DD: rejects dates like Feb 31 instead of rolling them into March.
+  function parseDay(v) {
+    const m = String(v).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (!m) throw new Error(`"${v}" isn't a YYYY-MM-DD date`);
+    const d = new Date(+m[1], +m[2] - 1, +m[3]);
+    if (d.getMonth() !== +m[2] - 1 || d.getDate() !== +m[3]) throw new Error(`${v} isn't a real date`);
+    return d;
+  }
   TOOLS.days_between = {
     label: "Days between dates",
     spec: {
@@ -1286,9 +1295,8 @@ dialog input:focus { border-color: #4a4f8a; }
     run: (a) => {
       const day = (v) => {
         if (!v || /^today$/i.test(v)) { const n = new Date(); return Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()); }
-        const m = String(v).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-        if (!m) throw new Error(`"${v}" isn't a YYYY-MM-DD date`);
-        return Date.UTC(+m[1], +m[2] - 1, +m[3]);
+        const d = parseDay(v);
+        return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
       };
       const days = Math.round((day(a.to) - day(a.from)) / 86400000);
       return `${days} day${Math.abs(days) === 1 ? "" : "s"}`;
@@ -1309,9 +1317,7 @@ dialog input:focus { border-color: #4a4f8a; }
       if (!Number.isFinite(days)) throw new Error("days must be a number");
       let base = new Date();
       if (a.from && !/^today$/i.test(a.from)) {
-        const m = String(a.from).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-        if (!m) throw new Error(`"${a.from}" isn't a YYYY-MM-DD date`);
-        base = new Date(+m[1], +m[2] - 1, +m[3]);
+        base = parseDay(a.from);
       }
       const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + Math.round(days));
       const pad = (n) => String(n).padStart(2, "0");
