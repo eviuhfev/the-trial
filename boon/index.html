@@ -1230,7 +1230,7 @@ dialog input:focus { border-color: #4a4f8a; }
   const AGENT_PROMPT = SYSTEM_PROMPT +
     " You are in Agent mode: you complete tasks by calling tools, one step at a time. " +
     "Never do math or date math in your head: use the calculator for arithmetic, get_datetime for today's date or the time, " +
-    "and days_between to count days between dates. " +
+    "days_between to count days between dates, and add_days for questions like \"what date is 100 days from today\". " +
     "When the task is done, give a short, clear final answer.";
 
   const MATH_NAMES = new Set(["sqrt", "cbrt", "abs", "round", "floor", "ceil", "sin", "cos", "tan", "asin", "acos", "atan",
@@ -1292,6 +1292,30 @@ dialog input:focus { border-color: #4a4f8a; }
       };
       const days = Math.round((day(a.to) - day(a.from)) / 86400000);
       return `${days} day${Math.abs(days) === 1 ? "" : "s"}`;
+    },
+  };
+  TOOLS.add_days = {
+    label: "Add days to a date",
+    spec: {
+      description: "Find the date a number of days after (or, if negative, before) a date. Leave 'from' out to start from today.",
+      parameters: { type: "object", properties: {
+        days: { type: "number", description: "For example 100, or -30 for 30 days before" },
+        from: { type: "string", description: "Optional YYYY-MM-DD, defaults to today" },
+      }, required: ["days"] },
+    },
+    show: (a) => `${a.from || "today"} ${Number(a.days) < 0 ? "−" : "+"} ${Math.abs(Number(a.days))} days`,
+    run: (a) => {
+      const days = Number(a.days);
+      if (!Number.isFinite(days)) throw new Error("days must be a number");
+      let base = new Date();
+      if (a.from && !/^today$/i.test(a.from)) {
+        const m = String(a.from).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+        if (!m) throw new Error(`"${a.from}" isn't a YYYY-MM-DD date`);
+        base = new Date(+m[1], +m[2] - 1, +m[3]);
+      }
+      const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + Math.round(days));
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} (${d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })})`;
     },
   };
   const TOOL_SPECS = Object.entries(TOOLS).map(([name, t]) => ({ type: "function", function: { name, ...t.spec } }));
