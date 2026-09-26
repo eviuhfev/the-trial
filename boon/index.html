@@ -284,6 +284,29 @@ details.think div { white-space: pre-wrap; border-left: 2px solid var(--edge); p
 .chip-btn:disabled { opacity: .5; cursor: default; filter: none; }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 
+/* ---------- agent (tools + step timeline) ---------- */
+.round.agent-on {
+  border-color: transparent;
+  background: linear-gradient(135deg, #4fd1a5, #5b8cf5);
+  box-shadow: 0 0 18px rgba(79,209,165,.4);
+}
+.agent-run .task-label { font-size: 12px; color: var(--ink-faint); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 8px; }
+.steps { list-style: none; margin: 0 0 14px; padding: 0; border-left: 2px solid var(--edge); }
+.step { position: relative; padding: 2px 0 12px 20px; font-size: 14px; color: var(--ink-dim); }
+.step::before {
+  content: ""; position: absolute; left: -6px; top: 7px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #2a2e4c; border: 2px solid #151724;
+}
+.step.done::before { background: #4fd1a5; }
+.step.error::before { background: var(--danger); }
+.step.running::before { background: var(--blue); box-shadow: 0 0 10px rgba(91,140,245,.8); }
+.step .step-title { color: var(--ink); display: flex; align-items: center; gap: 8px; }
+.step code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: #1d2030; padding: 1px 6px; border-radius: 5px; word-break: break-word; }
+.step .step-result { margin-top: 3px; }
+.step details summary { cursor: pointer; user-select: none; }
+.step details div { white-space: pre-wrap; border-left: 2px solid var(--edge); padding-left: 12px; margin-top: 6px; max-height: 220px; overflow-y: auto; color: var(--ink-faint); font-size: 13px; }
+
 /* ---------- settings dialog ---------- */
 dialog {
   width: min(480px, calc(100vw - 32px));
@@ -366,6 +389,9 @@ dialog input:focus { border-color: #4a4f8a; }
           </button>
           <button type="button" class="round" id="createBtn" aria-pressed="false" aria-label="Create an image or 3D model" title="Create: make an image, then turn it into 3D">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="m3 7 9 5 9-5M12 12v10"/></svg>
+          </button>
+          <button type="button" class="round" id="agentBtn" aria-pressed="false" aria-label="Agent mode" title="Agent: BOON uses tools to do a task, step by step">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 13.5v1M15 13.5v1"/><circle cx="12" cy="3.5" r="1"/></svg>
           </button>
           <input type="file" id="fileInput" multiple hidden accept="image/*,.txt,.md,.csv,.json,.js,.ts,.py,.html,.css,.java,.c,.cpp,.go,.rs,.rb,.sh,.yml,.yaml,.xml,.sql" />
           <div class="model">
@@ -453,7 +479,7 @@ dialog input:focus { border-color: #4a4f8a; }
     app: $("app"), chatList: $("chatList"), search: $("search"), newChat: $("newChat"),
     greeting: $("greeting"), greetText: $("greetText"), thread: $("thread"), scroll: $("scroll"),
     composer: $("composer"), input: $("input"), sendBtn: $("sendBtn"), stopBtn: $("stopBtn"),
-    attachBtn: $("attachBtn"), fileInput: $("fileInput"), attachments: $("attachments"), createBtn: $("createBtn"),
+    attachBtn: $("attachBtn"), fileInput: $("fileInput"), attachments: $("attachments"), createBtn: $("createBtn"), agentBtn: $("agentBtn"),
     modelSelect: $("modelSelect"), hint: $("hint"),
     settings: $("settings"), keyInput: $("keyInput"), nameInput: $("nameInput"), hfInput: $("hfInput"), pollenInput: $("pollenInput"),
     openSettings: $("openSettings"), menuBtn: $("menuBtn"),
@@ -476,6 +502,7 @@ dialog input:focus { border-color: #4a4f8a; }
   }
 
   function renderHint() {
+    if (agentMode) return renderAgentHint();
     const sel = models.find((m) => m.id === els.modelSelect.value);
     els.hint.innerHTML = sel && sel.local
       ? `Running ${escapeHtml(sel.label)} on this computer with Ollama. Answers can be wrong.`
@@ -631,6 +658,7 @@ dialog input:focus { border-color: #4a4f8a; }
     } else {
       row.innerHTML = `<div class="avatar" aria-hidden="true"></div><div class="body"></div>`;
       if (m.kind === "image") fillCreation(row.querySelector(".body"), m);
+      else if (m.kind === "agent") fillAgent(row.querySelector(".body"), m);
       else fillBot(row.querySelector(".body"), m);
     }
     return row;
@@ -714,6 +742,7 @@ dialog input:focus { border-color: #4a4f8a; }
 
   async function send(text) {
     if (createMode) return create(text);
+    if (agentMode) return runAgent(text);
     const key = store.get("key", "");
     if (!text && !pending.length) return;
     if (!key && !isLocal(els.modelSelect.value)) { openSettings(); return; }
@@ -1178,6 +1207,244 @@ dialog input:focus { border-color: #4a4f8a; }
     }
   }
 
+  // ---------- agent: tools + step timeline ----------
+  // Agent mode lets the model call tools in a loop and shows every step. Gemma 3 can't call
+  // tools in Ollama, so the agent uses Qwen3 (or another tool-capable model) instead.
+  const AGENT_MAX_STEPS = 20;
+  const AGENT_DEFAULT = "qwen3:8b";
+  const TOOL_CAPABLE = /qwen3|qwen2\.5|llama3\.[123]|llama4|mistral|mixtral|hermes|granite|command-r|gpt-oss|glm|firefunction|nemotron/i;
+  const AGENT_PROMPT = SYSTEM_PROMPT +
+    " You are in Agent mode: you complete tasks by calling tools, one step at a time. " +
+    "Always use the calculator for arithmetic instead of working it out yourself, and get_datetime for today's date or the time. " +
+    "When the task is done, give a short, clear final answer.";
+
+  const MATH_NAMES = new Set(["sqrt", "cbrt", "abs", "round", "floor", "ceil", "sin", "cos", "tan", "asin", "acos", "atan",
+    "log", "log10", "log2", "exp", "pow", "min", "max", "PI", "E"]);
+  function calculate(expression) {
+    let expr = String(expression ?? "").replace(/×/g, "*").replace(/÷/g, "/").replace(/\^/g, "**").replace(/,(?=\d{3}\b)/g, "");
+    expr = expr.replace(/\bpi\b/gi, "PI").replace(/\bln\b/g, "log");
+    if (!/^[\d\s+\-*/%().,A-Za-z_]*$/.test(expr)) throw new Error("only numbers, + - * / % ^ ( ) and math functions are allowed");
+    expr = expr.replace(/(?<![\d.])[A-Za-z_]\w*/g, (name) => {
+      if (!MATH_NAMES.has(name)) throw new Error(`unknown name "${name}"`);
+      return "Math." + name;
+    });
+    const value = Function(`"use strict"; return (${expr});`)();
+    if (typeof value !== "number" || Number.isNaN(value)) throw new Error("that isn't a number");
+    return Number.isInteger(value) ? String(value) : String(+value.toPrecision(12));
+  }
+
+  const TOOLS = {
+    calculator: {
+      label: "Calculator",
+      spec: {
+        description: "Evaluate a math expression exactly. Supports + - * / % ^, parentheses and functions like sqrt, sin, log, round, pi.",
+        parameters: { type: "object", properties: { expression: { type: "string", description: "For example: (1299 * 0.85) + 12.5" } }, required: ["expression"] },
+      },
+      show: (a) => a.expression,
+      run: (a) => calculate(a.expression),
+    },
+    get_datetime: {
+      label: "Date and time",
+      spec: {
+        description: "Get the current date, time, weekday and time zone on the user's computer.",
+        parameters: { type: "object", properties: {} },
+      },
+      show: () => "",
+      run: () => {
+        const now = new Date();
+        return `${now.toLocaleString(undefined, { dateStyle: "full", timeStyle: "short" })} (time zone ${Intl.DateTimeFormat().resolvedOptions().timeZone})`;
+      },
+    },
+  };
+  const TOOL_SPECS = Object.entries(TOOLS).map(([name, t]) => ({ type: "function", function: { name, ...t.spec } }));
+
+  let agentMode = false;
+
+  function agentModel() {
+    const key = store.get("key", "");
+    const canTool = (m) => m.local && TOOL_CAPABLE.test(m.label) && !/vl\b|vision/i.test(m.label);
+    const sel = models.find((m) => m.id === els.modelSelect.value);
+    if (sel && canTool(sel)) return sel;
+    const local = localModels.find((m) => m.label === AGENT_DEFAULT) || localModels.find(canTool);
+    if (local) return local;
+    if (key) return sel && !sel.local ? sel : cloudModels[0];
+    return null;
+  }
+
+  function renderAgentHint() {
+    const m = agentModel();
+    els.hint.innerHTML = m
+      ? `Agent mode: BOON uses tools (calculator, date and time) with ${escapeHtml(m.label)}${m.local ? " on this computer" : ""} and shows every step.`
+      : `Agent mode needs a model that can use tools. Run <code>ollama pull ${AGENT_DEFAULT}</code> on this computer, or add an OpenRouter key.`;
+  }
+
+  function setAgentMode(on) {
+    agentMode = on;
+    els.agentBtn.classList.toggle("agent-on", on);
+    els.agentBtn.setAttribute("aria-pressed", String(on));
+    els.input.placeholder = on ? "Give BOON a task" : "Ask BOON";
+    renderHint();
+    els.input.focus();
+  }
+
+  function stepHtml(s) {
+    if (s.type === "think") {
+      return `<li class="step done"><details><summary>Thought it through</summary><div>${escapeHtml(s.text)}</div></details></li>`;
+    }
+    if (s.type === "tool") {
+      const tool = TOOLS[s.name];
+      const shown = tool ? tool.show(s.args || {}) : JSON.stringify(s.args || {});
+      const title = `${s.status === "running" ? '<span class="spinner"></span>' : ""}${escapeHtml(tool?.label || s.name)}${shown ? ` <code>${escapeHtml(String(shown))}</code>` : ""}`;
+      const result = s.status === "error" ? `Failed: ${s.result}` : s.result != null ? `→ ${s.result}` : "";
+      return `<li class="step ${s.status}"><div class="step-title">${title}</div>${result ? `<div class="step-result">${escapeHtml(result.length > 400 ? result.slice(0, 400) + "…" : result)}</div>` : ""}</li>`;
+    }
+    return "";
+  }
+
+  function fillAgent(body, m) {
+    body.dataset.mid = m.id;
+    let html = `<div class="agent-run"><div class="task-label">Agent</div><ol class="steps">`;
+    for (const s of m.steps) html += stepHtml(s);
+    if (m.running) html += `<li class="step running"><div class="step-title"><span class="spinner"></span>${m.steps.length ? "Deciding the next step…" : "Planning…"}</div></li>`;
+    html += `</ol>`;
+    if (m.error) html += `<div class="error">${escapeHtml(m.error)}</div>`;
+    if (m.content) html += `<div class="md">${renderMd(m.content)}</div>`;
+    if (!m.running && m.model) {
+      const label = models.find((x) => x.id === m.model)?.label || m.model.replace(LOCAL, "");
+      const tools = m.steps.filter((s) => s.type === "tool").length;
+      html += `<div class="meta">${escapeHtml(label)} · ${tools} tool step${tools === 1 ? "" : "s"}${m.ms ? ` · ${(m.ms / 1000).toFixed(1)}s` : ""}${m.note ? " · " + escapeHtml(m.note) : ""}</div>`;
+    }
+    body.innerHTML = html + `</div>`;
+    body.querySelectorAll(".md a").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; });
+  }
+
+  function rerenderAgent(m) {
+    const body = els.thread.querySelector(`[data-mid="${m.id}"]`);
+    if (body) fillAgent(body, m);
+    scrollDown();
+  }
+
+  async function callModel(model, messages, key) {
+    const local = isLocal(model);
+    let res;
+    try {
+      res = await fetch(local ? OLLAMA + "/v1/chat/completions" : API + "/chat/completions", {
+        method: "POST",
+        signal: controller.signal,
+        headers: local ? { "Content-Type": "application/json" } : {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + key,
+          "HTTP-Referer": location.origin && location.origin !== "null" ? location.origin : "https://github.com/eviuhfev/the-trial",
+          "X-Title": "BOON",
+        },
+        body: JSON.stringify({ model: local ? model.slice(LOCAL.length) : model, messages, tools: TOOL_SPECS, stream: false }),
+      });
+    } catch (err) {
+      if (local && err.name !== "AbortError") throw new Error("Couldn't reach Ollama on this computer. Make sure the Ollama app is running, then try again.");
+      throw err;
+    }
+    if (!res.ok) {
+      let msg = `${local ? "Ollama" : "The model"} returned an error (${res.status})`;
+      try { const j = await res.json(); msg = j.error?.message || (typeof j.error === "string" ? j.error : msg); } catch {}
+      if (!local && res.status === 401) msg = "Your OpenRouter key was rejected. Check it in Settings.";
+      if (/does not support tools/i.test(msg)) msg = `${model.replace(LOCAL, "")} can't use tools. Pick Qwen3 in the model picker, or run "ollama pull ${AGENT_DEFAULT}".`;
+      throw new Error(msg);
+    }
+    const j = await res.json();
+    if (j.error) throw new Error(j.error.message || "The model returned an error.");
+    const msg = j.choices?.[0]?.message;
+    if (!msg) throw new Error("The model sent back an empty reply.");
+    return msg;
+  }
+
+  function parseArgs(raw) {
+    if (raw && typeof raw === "object") return raw;
+    try { return JSON.parse(raw || "{}") || {}; } catch { return { _raw: String(raw) }; }
+  }
+
+  async function runAgent(text) {
+    if (!text) return;
+    const model = agentModel();
+    if (!model) { renderAgentHint(); els.hint.scrollIntoView?.(); return; }
+    const key = store.get("key", "");
+
+    let chat = current();
+    if (!chat) {
+      chat = { id: uid(), title: text.slice(0, 60), messages: [], updated: Date.now() };
+      chats.push(chat);
+      currentId = chat.id;
+    }
+    // Earlier turns give the agent context; agent turns count as plain user/assistant text.
+    const past = chat.messages
+      .filter((x) => !x.error && (!x.kind || x.kind === "agent-task" || (x.kind === "agent" && x.content)))
+      .map(({ role, content }) => ({ role, content }));
+    chat.messages.push({ role: "user", kind: "agent-task", content: text, display: text, images: [], files: [] });
+    const m = { role: "assistant", kind: "agent", id: uid(), content: "", steps: [], model: model.id, running: true };
+    chat.messages.push(m);
+    pending = [];
+    renderAttachments();
+    els.input.value = "";
+    autosize();
+    touch(m);
+    renderThread();
+    renderList();
+
+    const messages = [{ role: "system", content: AGENT_PROMPT }, ...past, { role: "user", content: text }];
+    const started = Date.now();
+    setBusy(true);
+    controller = new AbortController();
+    try {
+      for (let step = 1; ; step++) {
+        if (step > AGENT_MAX_STEPS) { m.error = `Stopped after ${AGENT_MAX_STEPS} steps so it doesn't run forever. Try a smaller task.`; break; }
+        const reply = await callModel(model.id, messages, key);
+        let content = typeof reply.content === "string" ? reply.content : "";
+        let thought = reply.reasoning || reply.reasoning_content || reply.thinking || "";
+        content = content.replace(/<think>([\s\S]*?)(<\/think>|$)/g, (_, t) => { thought += t; return ""; }).trim();
+        if (thought.trim()) m.steps.push({ type: "think", text: thought.trim() });
+        const calls = (reply.tool_calls || []).map((c) => ({
+          id: c.id || "call_" + uid(),
+          type: "function",
+          function: { name: c.function?.name, arguments: typeof c.function?.arguments === "string" ? c.function.arguments : JSON.stringify(c.function?.arguments || {}) },
+        }));
+        if (!calls.length) { m.content = content || "_Done._"; break; }
+        messages.push({ role: "assistant", content, tool_calls: calls });
+        for (const call of calls) {
+          const s = { type: "tool", name: call.function.name, args: parseArgs(call.function.arguments), status: "running" };
+          m.steps.push(s);
+          rerenderAgent(m);
+          const tool = TOOLS[s.name];
+          try {
+            if (!tool) throw new Error(`BOON has no tool called "${s.name}"`);
+            s.result = String(await tool.run(s.args));
+            s.status = "done";
+          } catch (err) {
+            s.result = err.message || String(err);
+            s.status = "error";
+          }
+          messages.push({ role: "tool", tool_call_id: call.id, content: s.status === "error" ? "Error: " + s.result : s.result });
+        }
+        touch(m);
+        rerenderAgent(m);
+      }
+    } catch (err) {
+      if (err.name === "AbortError") {
+        m.note = "stopped";
+        if (!m.content) m.content = "_Stopped._";
+      } else {
+        m.error = err.message || String(err);
+      }
+    } finally {
+      for (const s of m.steps) if (s.status === "running") { s.status = "error"; s.result = "stopped"; }
+      controller = null;
+      setBusy(false);
+      delete m.running;
+      m.ms = Date.now() - started;
+      touch(m);
+      rerenderAgent(m);
+      renderList();
+    }
+  }
+
   // ---------- settings ----------
   function openSettings() {
     els.keyInput.value = store.get("key", "");
@@ -1213,7 +1480,8 @@ dialog input:focus { border-color: #4a4f8a; }
   els.search.addEventListener("input", renderList);
   els.modelSelect.addEventListener("change", () => { store.set("model", els.modelSelect.value); renderHint(); });
   els.attachBtn.onclick = () => els.fileInput.click();
-  els.createBtn.onclick = () => setCreateMode(!createMode);
+  els.createBtn.onclick = () => { if (agentMode) setAgentMode(false); setCreateMode(!createMode); };
+  els.agentBtn.onclick = () => { if (createMode) setCreateMode(false); setAgentMode(!agentMode); };
   els.fileInput.onchange = async () => {
     for (const f of els.fileInput.files) {
       try { pending.push(await readFile(f)); } catch {}

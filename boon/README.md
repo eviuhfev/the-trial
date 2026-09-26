@@ -52,6 +52,21 @@ models on free Hugging Face Spaces, so no key is needed.
 
 The free Spaces share GPU time, so they have a daily limit. Adding a free Hugging Face token in Settings raises it.
 
+## Agent mode (tools)
+
+Tap the robot button next to the cube to switch the composer into Agent mode. Give BOON a task and it works
+through it with tools, showing every step as a timeline: what it thought, which tool it used, what came back,
+then the answer. Today's tools are a calculator and the date and time; more come later.
+
+Agent mode needs a model that can call tools. Gemma 3 can't, so BOON uses Qwen3 on your computer:
+
+```sh
+ollama pull qwen3:8b
+```
+
+If a tool-capable model is picked in the model picker, BOON uses that one instead. Without a local one, it uses
+the cloud model (needs the OpenRouter key). The pause button stops a task, and a task stops by itself after 20 steps.
+
 ## Features
 
 - Streaming replies with Markdown, code blocks and tables; a collapsible "Thinking" section for reasoning models
