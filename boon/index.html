@@ -390,6 +390,8 @@ dialog input:focus { border-color: #4a4f8a; }
     <input id="nameInput" type="text" placeholder="Jaeyoung Lee" />
     <label for="hfInput">Hugging Face token (optional, raises the free 3D limit)</label>
     <input id="hfInput" type="password" autocomplete="off" placeholder="hf_..." />
+    <label for="pollenInput">Pollinations key (optional backup for images)</label>
+    <input id="pollenInput" type="password" autocomplete="off" placeholder="From enter.pollinations.ai" />
     <div class="dialog-actions">
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
       <button class="btn primary" value="save" id="saveSettings">Save</button>
@@ -447,7 +449,7 @@ dialog input:focus { border-color: #4a4f8a; }
     composer: $("composer"), input: $("input"), sendBtn: $("sendBtn"), stopBtn: $("stopBtn"),
     attachBtn: $("attachBtn"), fileInput: $("fileInput"), attachments: $("attachments"), createBtn: $("createBtn"),
     modelSelect: $("modelSelect"), hint: $("hint"),
-    settings: $("settings"), keyInput: $("keyInput"), nameInput: $("nameInput"), hfInput: $("hfInput"),
+    settings: $("settings"), keyInput: $("keyInput"), nameInput: $("nameInput"), hfInput: $("hfInput"), pollenInput: $("pollenInput"),
     openSettings: $("openSettings"), menuBtn: $("menuBtn"),
   };
 
@@ -861,43 +863,69 @@ dialog input:focus { border-color: #4a4f8a; }
   }
 
   // ---------- create: image, then 3D ----------
-  // Images: Pollinations (github.com/pollinations/pollinations), free, no key.
-  // 3D: open-weights image-to-3D models on free Hugging Face Spaces, tried in order.
-  const IMAGE_API = "https://gen.pollinations.ai/image/";
+  // Both steps run open-weights models on free Hugging Face Spaces through @gradio/client.
+  // Images: FLUX.1-schnell (Apache-2.0). Pollinations is the backup when a key is set in Settings.
+  // 3D: Hunyuan3D-2, then Hunyuan3D-2.1 if the first is busy or down.
   const GRADIO = "https://cdn.jsdelivr.net/npm/@gradio/client@1/+esm";
+  const POLLINATIONS = "https://gen.pollinations.ai/image/";
+  // Gradio returns either FileData ({url}) or an update wrapper ({value: {url}}).
   const fileUrl = (x) => (typeof x === "string" ? x : x?.url || x?.value?.url || null);
-  const SPACES_3D = [
+  let gradio;
+  const loadGradio = async () => (gradio ||= await import(GRADIO));
+  const connect = async (id) => {
+    const { Client } = await loadGradio();
+    const token = store.get("hf", "");
+    return Client.connect(id, token ? { hf_token: token } : {});
+  };
+  const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+
+  const IMAGE_SOURCES = [
     {
-      id: "stabilityai/stable-fast-3d",
-      label: "Stable Fast 3D",
-      async run(app, image, handle_file) {
-        const opts = { foreground_ratio: 0.85, remesh_option: "None", vertex_count: -1, texture_size: 1024 };
-        try {
-          const res = await app.predict("/run_button", { input_image: image, ...opts });
-          const url = fileUrl(res.data?.[1]);
-          if (url) return url;
-        } catch { /* fall through to the background-removal path */ }
-        const pre = await app.predict("/requires_bg_remove", { image, fr: 0.85 });
-        const direct = fileUrl(pre.data?.[1]);
-        if (direct) return direct;
-        const cut = fileUrl(pre.data?.[0]);
-        const res = await app.predict("/run_button", { input_image: cut ? handle_file(cut) : image, ...opts });
-        return fileUrl(res.data?.[1]);
-      },
-    },
-    {
-      id: "tencent/Hunyuan3D-2",
-      label: "Hunyuan3D-2",
-      async run(app, image) {
-        const res = await app.predict("/shape_generation", {
-          caption: "", image,
-          mv_image_front: null, mv_image_back: null, mv_image_left: null, mv_image_right: null,
-          steps: 30, guidance_scale: 5, seed: 1234, octree_resolution: 256,
-          check_box_rembg: true, num_chunks: 8000, randomize_seed: true,
+      label: "FLUX.1-schnell",
+      async run(prompt) {
+        const app = await connect("black-forest-labs/FLUX.1-schnell");
+        const res = await app.predict("/infer", {
+          prompt, seed: 0, randomize_seed: true, width: 1024, height: 1024, num_inference_steps: 4,
         });
-        return fileUrl(res.data?.[0]);
+        const url = fileUrl(res.data?.[0]);
+        if (!url) throw new Error("FLUX.1-schnell didn't return an image.");
+        return fetch(url).then((r) => r.blob());
       },
     },
+    {
+      label: "Pollinations",
+      async run(prompt) {
+        const key = store.get("pollen", "");
+        if (!key) throw new Error("no Pollinations key");
+        const seed = Math.floor(Math.random() * 1e9);
+        const res = await fetch(`${POLLINATIONS}${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true&key=${encodeURIComponent(key)}`);
+        if (!res.ok) throw new Error(`Pollinations returned ${res.status}.`);
+        return res.blob();
+      },
+    },
+  ];
+
+  const hunyuan = (id, label, withCaption) => ({
+    id, label,
+    async run(app, image) {
+      const res = await app.predict("/shape_generation", {
+        ...(withCaption ? { caption: "" } : {}),
+        image,
+        mv_image_front: null, mv_image_back: null, mv_image_left: null, mv_image_right: null,
+        steps: 30, guidance_scale: 5, seed: 1234, octree_resolution: 256,
+        check_box_rembg: true, num_chunks: 8000, randomize_seed: true,
+      });
+      return fileUrl(res.data?.[0]);
+    },
+  });
+  const SPACES_3D = [
+    hunyuan("tencent/Hunyuan3D-2", "Hunyuan3D-2", true),
+    hunyuan("tencent/Hunyuan3D-2.1", "Hunyuan3D-2.1", false),
   ];
 
   let createMode = false;
@@ -1004,23 +1032,35 @@ dialog input:focus { border-color: #4a4f8a; }
       return make3D(m);
     }
 
-    const seed = Math.floor(Math.random() * 1e9);
-    const url = `${IMAGE_API}${encodeURIComponent(text)}?width=1024&height=1024&seed=${seed}&nologo=true`;
     m.status = "Creating your image…";
     rerender(m);
-    try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(res.status === 429 ? "The free image service is busy. Try again in a minute." : `The image service returned an error (${res.status}).`);
-      const blob = await res.blob();
-      if (!blob.type.startsWith("image/")) throw new Error("The image service didn't send back an image. Try again.");
-      m.image = url;               // stable link (same prompt + seed) for chat history
-      m.note = "Image by Pollinations";
-    } catch (err) {
-      m.error = err.message.startsWith("The ") ? err.message : "Couldn't reach the image service. Check your internet connection.";
-    } finally {
-      delete m.status;
-      touch(m); rerender(m);
+    let lastErr;
+    for (const source of IMAGE_SOURCES) {
+      try {
+        const blob = await source.run(text);
+        if (!blob.type.startsWith("image/")) throw new Error(`${source.label} didn't send back an image.`);
+        m.image = await blobToDataUrl(blob);   // Space links expire, so keep the image itself
+        m.imageBy = source.label;
+        m.note = `Image by ${source.label}`;
+        lastErr = null;
+        break;
+      } catch (err) {
+        // A skipped backup shouldn't hide the real reason the main source failed.
+        if (!lastErr || !/no Pollinations key/.test(err.message)) lastErr = err;
+      }
     }
+    if (lastErr) m.error = friendlyError(lastErr, "Couldn't create the image");
+    delete m.status;
+    touch(m); rerender(m);
+  }
+
+  function friendlyError(err, lead) {
+    const msg = String(err?.message || err || "");
+    if (/quota|GPU|exceeded|limit/i.test(msg)) {
+      return "The free AI servers have hit their limit for now. Try again later, or add a free Hugging Face token in Settings.";
+    }
+    if (/fetch|network|load/i.test(msg)) return `${lead}. Check your internet connection and try again.`;
+    return `${lead}${msg ? ": " + msg : "."}`;
   }
 
   async function make3D(m) {
@@ -1029,19 +1069,18 @@ dialog input:focus { border-color: #4a4f8a; }
     m.status = "Loading the 3D tools…";
     rerender(m);
     try {
-      const { Client, handle_file } = await import(GRADIO);
+      await loadGradio();
       const blob = await (await fetch(m.image)).blob();
-      const token = store.get("hf", "");
       let lastErr;
       for (const space of SPACES_3D) {
         try {
-          m.status = `Building a 3D model with ${space.label}. This usually takes 20 to 90 seconds…`;
+          m.status = `Building a 3D model with ${space.label}. This usually takes 15 to 60 seconds…`;
           rerender(m);
-          const app = await Client.connect(space.id, token ? { hf_token: token } : {});
-          const url = await space.run(app, blob, handle_file);
+          const app = await connect(space.id);
+          const url = await space.run(app, blob);
           if (!url) throw new Error(`${space.label} didn't return a model.`);
           m.model3d = url;
-          m.note = (m.image.startsWith("data:") ? "" : "Image by Pollinations · ") + `3D by ${space.label}`;
+          m.note = (m.imageBy ? `Image by ${m.imageBy} · ` : "") + `3D by ${space.label}`;
           try {
             m.status = "Downloading the 3D model…";
             rerender(m);
@@ -1055,10 +1094,7 @@ dialog input:focus { border-color: #4a4f8a; }
       }
       throw lastErr;
     } catch (err) {
-      const msg = String(err?.message || err || "");
-      m.error = /quota|GPU|exceeded|limit/i.test(msg)
-        ? "The free 3D servers have hit their limit for now. Try again later, or add a free Hugging Face token in Settings."
-        : "Couldn't build the 3D model" + (msg ? `: ${msg}` : ".");
+      m.error = friendlyError(err, "Couldn't build the 3D model");
     } finally {
       delete m.status;
       touch(m); rerender(m);
@@ -1070,6 +1106,7 @@ dialog input:focus { border-color: #4a4f8a; }
     els.keyInput.value = store.get("key", "");
     els.nameInput.value = store.get("name", "");
     els.hfInput.value = store.get("hf", "");
+    els.pollenInput.value = store.get("pollen", "");
     els.settings.showModal();
     (els.keyInput.value ? els.nameInput : els.keyInput).focus();
   }
@@ -1078,6 +1115,7 @@ dialog input:focus { border-color: #4a4f8a; }
     store.set("key", els.keyInput.value.trim());
     store.set("name", els.nameInput.value.trim());
     store.set("hf", els.hfInput.value.trim());
+    store.set("pollen", els.pollenInput.value.trim());
     renderGreeting();
     renderHint();
   });

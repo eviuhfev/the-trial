@@ -38,14 +38,16 @@ Free models have per-minute and daily request caps; see
 
 ## Create: image to 3D
 
-Tap the cube button next to `+` to switch the composer into Create mode.
+Tap the cube button next to `+` to switch the composer into Create mode. Both steps run open-weights
+models on free Hugging Face Spaces, so no key is needed.
 
-1. Describe something and BOON generates an image with [Pollinations](https://github.com/pollinations/pollinations)
-   (open source, free, no key). Or attach your own image instead.
-2. Tap **Make 3D model** and BOON sends the image to an open-weights image-to-3D model on a free Hugging Face
-   Space: [Stable Fast 3D](https://github.com/Stability-AI/stable-fast-3d) first, then
-   [Hunyuan3D-2](https://github.com/Tencent/Hunyuan3D-2) if that one is busy or down.
+1. Describe something and BOON makes an image with [FLUX.1-schnell](https://huggingface.co/black-forest-labs/FLUX.1-schnell)
+   (Apache-2.0). Or attach your own image instead. A [Pollinations](https://enter.pollinations.ai) key in Settings
+   adds a backup image source.
+2. Tap **Make 3D model** and BOON turns the image into a mesh with [Hunyuan3D-2](https://github.com/Tencent/Hunyuan3D-2)
+   (Hunyuan3D-2.1 as backup). It removes the background itself; an object on a plain background works best.
 3. The result shows in a 3D viewer you can drag to spin. **Download .glb** saves it for Blender, games or 3D printing.
+   The mesh is untextured (white).
 
 The free Spaces share GPU time, so they have a daily limit. Adding a free Hugging Face token in Settings raises it.
 
