@@ -514,9 +514,15 @@ dialog input:focus { border-color: #4a4f8a; }
   }
 
   // ---------- models ----------
+  // Ollama lists the newest pull first. Qwen3 (the agent's model) thinks for a long time before it
+  // answers, so plain chat defaults to a fast non-thinking model.
+  const chatDefault = () => localModels.find((m) => m.label === "gemma3:4b") ||
+    localModels.find((m) => /gemma/i.test(m.label)) ||
+    localModels.find((m) => !/qwen3|deepseek-r1|gpt-oss|magistral/i.test(m.label)) || localModels[0];
+
   function renderModels() {
     models = [...localModels, ...cloudModels];
-    const chosen = store.get("model", localModels[0]?.id || CURATED[0].id);
+    const chosen = store.get("model", chatDefault()?.id || CURATED[0].id);
     const sel = els.modelSelect;
     sel.innerHTML = "";
     const group = (label, list) => {
@@ -529,7 +535,7 @@ dialog input:focus { border-color: #4a4f8a; }
     group("On this computer", localModels);
     group("Free cloud (OpenRouter)", cloudModels.filter((m) => m.curated !== false));
     group("More free cloud models", cloudModels.filter((m) => m.curated === false));
-    sel.value = models.some((m) => m.id === chosen) ? chosen : (localModels[0] || models[0]).id;
+    sel.value = models.some((m) => m.id === chosen) ? chosen : (chatDefault() || models[0]).id;
     renderHint();
   }
 
@@ -1223,6 +1229,8 @@ dialog input:focus { border-color: #4a4f8a; }
   function calculate(expression) {
     let expr = String(expression ?? "").replace(/×/g, "*").replace(/÷/g, "/").replace(/\^/g, "**").replace(/,(?=\d{3}\b)/g, "");
     expr = expr.replace(/\bpi\b/gi, "PI").replace(/\bln\b/g, "log");
+    // "17% of 2340" and "1299 * 15%" mean percentages; "10 % 3" stays a remainder.
+    expr = expr.replace(/(\d+(?:\.\d+)?)\s*%\s*of\b/gi, "($1/100)*").replace(/(\d+(?:\.\d+)?)\s*%(?!\s*[\d(.])/g, "($1/100)");
     if (!/^[\d\s+\-*/%().,A-Za-z_]*$/.test(expr)) throw new Error("only numbers, + - * / % ^ ( ) and math functions are allowed");
     expr = expr.replace(/(?<![\d.])[A-Za-z_]\w*/g, (name) => {
       if (!MATH_NAMES.has(name)) throw new Error(`unknown name "${name}"`);
@@ -1237,7 +1245,7 @@ dialog input:focus { border-color: #4a4f8a; }
     calculator: {
       label: "Calculator",
       spec: {
-        description: "Evaluate a math expression exactly. Supports + - * / % ^, parentheses and functions like sqrt, sin, log, round, pi.",
+        description: "Evaluate a math expression exactly. Write plain arithmetic, e.g. 2340*0.17 or (1299*0.85)+8. Supports + - * / ^, parentheses, percentages like 17% of 2340, and functions like sqrt, sin, log, round, pi.",
         parameters: { type: "object", properties: { expression: { type: "string", description: "For example: (1299 * 0.85) + 12.5" } }, required: ["expression"] },
       },
       show: (a) => a.expression,
@@ -1337,7 +1345,11 @@ dialog input:focus { border-color: #4a4f8a; }
           "HTTP-Referer": location.origin && location.origin !== "null" ? location.origin : "https://github.com/eviuhfev/the-trial",
           "X-Title": "BOON",
         },
-        body: JSON.stringify({ model: local ? model.slice(LOCAL.length) : model, messages, tools: TOOL_SPECS, stream: false }),
+        // Qwen3 thinks for ~40 s per step on a laptop; with thinking off it picks tools in ~2 s.
+        body: JSON.stringify({
+          model: local ? model.slice(LOCAL.length) : model, messages, tools: TOOL_SPECS, stream: false,
+          ...(local ? { reasoning_effort: "none" } : {}),
+        }),
       });
     } catch (err) {
       if (local && err.name !== "AbortError") throw new Error("Couldn't reach Ollama on this computer. Make sure the Ollama app is running, then try again.");
