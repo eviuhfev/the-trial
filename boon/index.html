@@ -866,7 +866,8 @@ dialog input:focus { border-color: #4a4f8a; }
   // Both steps run open-weights models on free Hugging Face Spaces through @gradio/client.
   // Images: FLUX.1-schnell (Apache-2.0). Pollinations is the backup when a key is set in Settings.
   // 3D: Hunyuan3D-2, then Hunyuan3D-2.1 if the first is busy or down.
-  const GRADIO = "https://cdn.jsdelivr.net/npm/@gradio/client@1/+esm";
+  // Gradio's own browser build (the default entry pulls in Node-only modules).
+  const GRADIO = "https://cdn.jsdelivr.net/npm/@gradio/client@1.19.1/dist/browser.js";
   const POLLINATIONS = "https://gen.pollinations.ai/image/";
   // Gradio returns either FileData ({url}) or an update wrapper ({value: {url}}).
   const fileUrl = (x) => (typeof x === "string" ? x : x?.url || x?.value?.url || null);
@@ -951,7 +952,8 @@ dialog input:focus { border-color: #4a4f8a; }
     let frame;
     if (m.status) frame = `<div class="loading"><span class="spinner"></span><span>${escapeHtml(m.status)}</span></div>`;
     else if (model) frame = `<model-viewer src="${escapeHtml(model)}" camera-controls auto-rotate shadow-intensity="1" exposure="1.1" alt="3D model of ${escapeHtml(m.prompt || "the image")}"></model-viewer>`;
-    else frame = `<img alt="${escapeHtml(m.prompt || "Image")}" src="${escapeHtml(m.image || "")}">`;
+    else if (m.image) frame = `<img alt="${escapeHtml(m.prompt || "Image")}" src="${escapeHtml(m.image)}">`;
+    else frame = `<div class="loading">${escapeHtml(m.error || "No image yet.")}</div>`;
 
     const busy = !!m.status;
     let actions = "";
@@ -961,13 +963,14 @@ dialog input:focus { border-color: #4a4f8a; }
         : `<button class="chip-btn primary" data-act="3d">Make 3D model</button>`;
       if (model) actions += `<button class="chip-btn" data-act="save">Download .glb</button>`;
     }
+    if (!m.image && !busy && m.prompt) actions = `<button class="chip-btn primary" data-act="retry">Try again</button>`;
     if (m.model3d && !busy && m.showImage) actions = `<button class="chip-btn primary" data-act="show3d">Show 3D model</button><button class="chip-btn" data-act="save">Download .glb</button>`;
 
     const showImg = m.showImage && m.image;
     body.innerHTML = `<div class="creation">
       <div class="prompt">${escapeHtml(m.prompt ? "“" + m.prompt + "”" : "Your image")}</div>
       <div class="frame">${showImg ? `<img alt="${escapeHtml(m.prompt || "Image")}" src="${escapeHtml(m.image)}">` : frame}</div>
-      ${m.error ? `<div class="error">${escapeHtml(m.error)}</div>` : ""}
+      ${m.error && m.image ? `<div class="error">${escapeHtml(m.error)}</div>` : ""}
       ${actions ? `<div class="actions">${actions}</div>` : ""}
       ${m.note ? `<div class="meta">${escapeHtml(m.note)}</div>` : ""}
     </div>`;
@@ -986,6 +989,7 @@ dialog input:focus { border-color: #4a4f8a; }
         if (act === "image") { m.showImage = true; rerender(m); }
         if (act === "show3d") { m.showImage = false; rerender(m); }
         if (act === "save") saveModel(m);
+        if (act === "retry") makeImage(m);
       };
     });
   }
@@ -1032,12 +1036,18 @@ dialog input:focus { border-color: #4a4f8a; }
       return make3D(m);
     }
 
+    return makeImage(m);
+  }
+
+  async function makeImage(m) {
+    if (m.status) return;
+    m.error = undefined;
     m.status = "Creating your image…";
     rerender(m);
     let lastErr;
     for (const source of IMAGE_SOURCES) {
       try {
-        const blob = await source.run(text);
+        const blob = await source.run(m.prompt);
         if (!blob.type.startsWith("image/")) throw new Error(`${source.label} didn't send back an image.`);
         m.image = await blobToDataUrl(blob);   // Space links expire, so keep the image itself
         m.imageBy = source.label;
@@ -1045,6 +1055,7 @@ dialog input:focus { border-color: #4a4f8a; }
         lastErr = null;
         break;
       } catch (err) {
+        console.error("BOON image:", source.label, err);
         // A skipped backup shouldn't hide the real reason the main source failed.
         if (!lastErr || !/no Pollinations key/.test(err.message)) lastErr = err;
       }
@@ -1055,13 +1066,15 @@ dialog input:focus { border-color: #4a4f8a; }
   }
 
   function friendlyError(err, lead) {
-    const msg = String(err?.message || err || "");
-    if (/quota|GPU|exceeded|limit/i.test(msg)) {
+    // Gradio rejects with plain status objects ({stage: "error", message}) as well as Errors.
+    const msg = err?.message || (err && typeof err === "object" ? JSON.stringify(err).slice(0, 200) : String(err || ""));
+    if (/quota|exceeded|limit/i.test(msg)) {
       return "The free AI servers have hit their limit for now. Try again later, or add a free Hugging Face token in Settings.";
     }
-    if (/fetch|network|load/i.test(msg)) return `${lead}. Check your internet connection and try again.`;
+    if (/failed to fetch|networkerror|load failed/i.test(msg)) return `${lead}. Check your internet connection and try again. (${msg})`;
     return `${lead}${msg ? ": " + msg : "."}`;
   }
+
 
   async function make3D(m) {
     if (m.status) return;
@@ -1089,6 +1102,7 @@ dialog input:focus { border-color: #4a4f8a; }
           } catch { /* the viewer can still load it straight from the link */ }
           return;
         } catch (err) {
+          console.error("BOON 3D:", space.label, err);
           lastErr = err;
         }
       }
