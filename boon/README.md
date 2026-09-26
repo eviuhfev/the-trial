@@ -11,8 +11,9 @@ It is a single static page (`index.html`) with no build step and no server.
 
 ## Models
 
-The picker defaults to **GLM-5.2** (Z.ai, MIT-licensed open weights), the highest scorer among
-OpenRouter's current free models on the Artificial Analysis Intelligence Index. Also listed:
+The picker defaults to **GLM-5.2** (Z.ai, MIT-licensed open weights), one of the strongest
+open-weights models on OpenRouter's free list (it scores 34 on the Artificial Analysis Intelligence
+Index, against 23 for Nemotron 3 Ultra). Also listed:
 Qwen 3.8, Nemotron 3 Ultra, Gemma 4 (reads images) and **Auto**, OpenRouter's router across all
 free models. Any other free model OpenRouter offers shows up under "More free models", since the
 list is fetched live on page load.
