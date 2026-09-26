@@ -36,6 +36,19 @@ If the chosen model is rate-limited or retired, BOON retries once on Auto and sa
 Free models have per-minute and daily request caps; see
 [OpenRouter's limits](https://openrouter.ai/docs/api-reference/limits) for the current numbers.
 
+## Create: image to 3D
+
+Tap the cube button next to `+` to switch the composer into Create mode.
+
+1. Describe something and BOON generates an image with [Pollinations](https://github.com/pollinations/pollinations)
+   (open source, free, no key). Or attach your own image instead.
+2. Tap **Make 3D model** and BOON sends the image to an open-weights image-to-3D model on a free Hugging Face
+   Space: [Stable Fast 3D](https://github.com/Stability-AI/stable-fast-3d) first, then
+   [Hunyuan3D-2](https://github.com/Tencent/Hunyuan3D-2) if that one is busy or down.
+3. The result shows in a 3D viewer you can drag to spin. **Download .glb** saves it for Blender, games or 3D printing.
+
+The free Spaces share GPU time, so they have a daily limit. Adding a free Hugging Face token in Settings raises it.
+
 ## Features
 
 - Streaming replies with Markdown, code blocks and tables; a collapsible "Thinking" section for reasoning models

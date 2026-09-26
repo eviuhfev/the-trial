@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <style>
 :root {
@@ -243,6 +244,40 @@ details.think div { white-space: pre-wrap; border-left: 2px solid var(--edge); p
 .hint { max-width: 1000px; margin: 10px auto 0; text-align: center; font-size: 12px; color: var(--ink-faint); }
 .hint a { color: var(--ink-dim); }
 
+/* ---------- create (image + 3D) ---------- */
+.round.create-on {
+  border-color: transparent;
+  background: linear-gradient(135deg, #6a9bff, #7b6cf0);
+  box-shadow: 0 0 18px rgba(106,155,255,.45);
+}
+.creation { display: flex; flex-direction: column; gap: 12px; }
+.creation .prompt { font-size: 13px; color: var(--ink-faint); }
+.creation .frame {
+  width: min(460px, 100%);
+  aspect-ratio: 1;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  background: #10121b;
+  display: grid; place-items: center;
+}
+.creation .frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.creation model-viewer { width: 100%; height: 100%; background: radial-gradient(circle at 50% 40%, #232746, #0f1018); --poster-color: transparent; }
+.creation .loading { color: var(--ink-dim); font-size: 14px; display: flex; align-items: center; gap: 10px; padding: 20px; text-align: center; }
+.spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #3a3f6a; border-top-color: var(--blue); animation: spin .9s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.creation .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 38px; padding: 0 16px;
+  border-radius: 19px; border: 1px solid #34386a;
+  background: #1b1e30; font-size: 14px; text-decoration: none; color: var(--ink);
+}
+.chip-btn:hover { filter: brightness(1.25); }
+.chip-btn.primary { border: 0; background: linear-gradient(135deg, #6a9bff, #5b6ef0); font-weight: 600; }
+.chip-btn:disabled { opacity: .5; cursor: default; filter: none; }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
 /* ---------- settings dialog ---------- */
 dialog {
   width: min(480px, calc(100vw - 32px));
@@ -323,6 +358,9 @@ dialog input:focus { border-color: #4a4f8a; }
           <button type="button" class="round" id="attachBtn" aria-label="Attach a file" title="Attach an image or text file">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
           </button>
+          <button type="button" class="round" id="createBtn" aria-pressed="false" aria-label="Create an image or 3D model" title="Create: make an image, then turn it into 3D">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="m3 7 9 5 9-5M12 12v10"/></svg>
+          </button>
           <input type="file" id="fileInput" multiple hidden accept="image/*,.txt,.md,.csv,.json,.js,.ts,.py,.html,.css,.java,.c,.cpp,.go,.rs,.rb,.sh,.yml,.yaml,.xml,.sql" />
           <div class="model">
             <select id="modelSelect" aria-label="Model"></select>
@@ -350,6 +388,8 @@ dialog input:focus { border-color: #4a4f8a; }
     <input id="keyInput" type="password" autocomplete="off" placeholder="sk-or-v1-..." />
     <label for="nameInput">Your name</label>
     <input id="nameInput" type="text" placeholder="Jaeyoung Lee" />
+    <label for="hfInput">Hugging Face token (optional, raises the free 3D limit)</label>
+    <input id="hfInput" type="password" autocomplete="off" placeholder="hf_..." />
     <div class="dialog-actions">
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
       <button class="btn primary" value="save" id="saveSettings">Save</button>
@@ -405,9 +445,9 @@ dialog input:focus { border-color: #4a4f8a; }
     app: $("app"), chatList: $("chatList"), search: $("search"), newChat: $("newChat"),
     greeting: $("greeting"), greetText: $("greetText"), thread: $("thread"), scroll: $("scroll"),
     composer: $("composer"), input: $("input"), sendBtn: $("sendBtn"), stopBtn: $("stopBtn"),
-    attachBtn: $("attachBtn"), fileInput: $("fileInput"), attachments: $("attachments"),
+    attachBtn: $("attachBtn"), fileInput: $("fileInput"), attachments: $("attachments"), createBtn: $("createBtn"),
     modelSelect: $("modelSelect"), hint: $("hint"),
-    settings: $("settings"), keyInput: $("keyInput"), nameInput: $("nameInput"),
+    settings: $("settings"), keyInput: $("keyInput"), nameInput: $("nameInput"), hfInput: $("hfInput"),
     openSettings: $("openSettings"), menuBtn: $("menuBtn"),
   };
 
@@ -582,7 +622,8 @@ dialog input:focus { border-color: #4a4f8a; }
       row.appendChild(body);
     } else {
       row.innerHTML = `<div class="avatar" aria-hidden="true"></div><div class="body"></div>`;
-      fillBot(row.querySelector(".body"), m);
+      if (m.kind === "image") fillCreation(row.querySelector(".body"), m);
+      else fillBot(row.querySelector(".body"), m);
     }
     return row;
   }
@@ -664,6 +705,7 @@ dialog input:focus { border-color: #4a4f8a; }
   }
 
   async function send(text) {
+    if (createMode) return create(text);
     const key = store.get("key", "");
     if (!text && !pending.length) return;
     if (!key && !isLocal(els.modelSelect.value)) { openSettings(); return; }
@@ -703,7 +745,7 @@ dialog input:focus { border-color: #4a4f8a; }
 
     setBusy(true);
     controller = new AbortController();
-    const history = [{ role: "system", content: SYSTEM_PROMPT }, ...chat.messages.filter((m) => !m.error).map(({ role, content }) => ({ role, content }))];
+    const history = [{ role: "system", content: SYSTEM_PROMPT }, ...chat.messages.filter((m) => !m.error && !m.kind).map(({ role, content }) => ({ role, content }))];
 
     try {
       try {
@@ -818,10 +860,216 @@ dialog input:focus { border-color: #4a4f8a; }
     }
   }
 
+  // ---------- create: image, then 3D ----------
+  // Images: Pollinations (github.com/pollinations/pollinations), free, no key.
+  // 3D: open-weights image-to-3D models on free Hugging Face Spaces, tried in order.
+  const IMAGE_API = "https://gen.pollinations.ai/image/";
+  const GRADIO = "https://cdn.jsdelivr.net/npm/@gradio/client@1/+esm";
+  const fileUrl = (x) => (typeof x === "string" ? x : x?.url || x?.value?.url || null);
+  const SPACES_3D = [
+    {
+      id: "stabilityai/stable-fast-3d",
+      label: "Stable Fast 3D",
+      async run(app, image, handle_file) {
+        const opts = { foreground_ratio: 0.85, remesh_option: "None", vertex_count: -1, texture_size: 1024 };
+        try {
+          const res = await app.predict("/run_button", { input_image: image, ...opts });
+          const url = fileUrl(res.data?.[1]);
+          if (url) return url;
+        } catch { /* fall through to the background-removal path */ }
+        const pre = await app.predict("/requires_bg_remove", { image, fr: 0.85 });
+        const direct = fileUrl(pre.data?.[1]);
+        if (direct) return direct;
+        const cut = fileUrl(pre.data?.[0]);
+        const res = await app.predict("/run_button", { input_image: cut ? handle_file(cut) : image, ...opts });
+        return fileUrl(res.data?.[1]);
+      },
+    },
+    {
+      id: "tencent/Hunyuan3D-2",
+      label: "Hunyuan3D-2",
+      async run(app, image) {
+        const res = await app.predict("/shape_generation", {
+          caption: "", image,
+          mv_image_front: null, mv_image_back: null, mv_image_left: null, mv_image_right: null,
+          steps: 30, guidance_scale: 5, seed: 1234, octree_resolution: 256,
+          check_box_rembg: true, num_chunks: 8000, randomize_seed: true,
+        });
+        return fileUrl(res.data?.[0]);
+      },
+    },
+  ];
+
+  let createMode = false;
+  const liveModels = new Map();   // message id -> object URL of the downloaded .glb (this visit only)
+
+  function setCreateMode(on) {
+    createMode = on;
+    els.createBtn.classList.toggle("create-on", on);
+    els.createBtn.setAttribute("aria-pressed", String(on));
+    els.input.placeholder = on ? "Describe an image to create, or attach one to turn into 3D" : "Ask BOON";
+    els.input.focus();
+  }
+
+  function rerender(m) {
+    const body = els.thread.querySelector(`[data-mid="${m.id}"]`);
+    if (body) fillCreation(body, m);
+    scrollDown();
+  }
+
+  function fillCreation(body, m) {
+    body.dataset.mid = m.id;
+    const model = liveModels.get(m.id) || m.model3d;
+    let frame;
+    if (m.status) frame = `<div class="loading"><span class="spinner"></span><span>${escapeHtml(m.status)}</span></div>`;
+    else if (model) frame = `<model-viewer src="${escapeHtml(model)}" camera-controls auto-rotate shadow-intensity="1" exposure="1.1" alt="3D model of ${escapeHtml(m.prompt || "the image")}"></model-viewer>`;
+    else frame = `<img alt="${escapeHtml(m.prompt || "Image")}" src="${escapeHtml(m.image || "")}">`;
+
+    const busy = !!m.status;
+    let actions = "";
+    if (m.image && !busy) {
+      actions += model
+        ? `<button class="chip-btn" data-act="image">Show image</button>`
+        : `<button class="chip-btn primary" data-act="3d">Make 3D model</button>`;
+      if (model) actions += `<button class="chip-btn" data-act="save">Download .glb</button>`;
+    }
+    if (m.model3d && !busy && m.showImage) actions = `<button class="chip-btn primary" data-act="show3d">Show 3D model</button><button class="chip-btn" data-act="save">Download .glb</button>`;
+
+    const showImg = m.showImage && m.image;
+    body.innerHTML = `<div class="creation">
+      <div class="prompt">${escapeHtml(m.prompt ? "“" + m.prompt + "”" : "Your image")}</div>
+      <div class="frame">${showImg ? `<img alt="${escapeHtml(m.prompt || "Image")}" src="${escapeHtml(m.image)}">` : frame}</div>
+      ${m.error ? `<div class="error">${escapeHtml(m.error)}</div>` : ""}
+      ${actions ? `<div class="actions">${actions}</div>` : ""}
+      ${m.note ? `<div class="meta">${escapeHtml(m.note)}</div>` : ""}
+    </div>`;
+    const img = body.querySelector(".frame img");
+    if (img) img.onerror = () => { if (!m.error) { m.error = "The image didn't load. Try again in a moment."; rerender(m); } };
+    const mv = body.querySelector("model-viewer");
+    if (mv) mv.addEventListener("error", () => {
+      if (liveModels.has(m.id)) return;
+      m.model3d = undefined; m.error = "This 3D model link has expired. Make it again.";
+      saveChats(); rerender(m);
+    });
+    body.querySelectorAll("[data-act]").forEach((b) => {
+      b.onclick = () => {
+        const act = b.dataset.act;
+        if (act === "3d") make3D(m);
+        if (act === "image") { m.showImage = true; rerender(m); }
+        if (act === "show3d") { m.showImage = false; rerender(m); }
+        if (act === "save") saveModel(m);
+      };
+    });
+  }
+
+  async function saveModel(m) {
+    const src = liveModels.get(m.id) || m.model3d;
+    if (!src) return;
+    const a = document.createElement("a");
+    a.download = (m.prompt || "boon-model").replace(/[^\w -]+/g, "").trim().slice(0, 40).replace(/\s+/g, "-") + ".glb";
+    a.href = src;
+    if (!src.startsWith("blob:")) {
+      try { a.href = URL.createObjectURL(await (await fetch(src)).blob()); } catch {}
+    }
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  function chatOf(m) { return chats.find((c) => c.messages.includes(m)); }
+  function touch(m) { const c = chatOf(m); if (c) { c.updated = Date.now(); saveChats(); } }
+
+  async function create(text) {
+    const image = pending.find((a) => a.kind === "image");
+    if (!text && !image) return;
+
+    let chat = current();
+    if (!chat) {
+      chat = { id: uid(), title: (text || image.name || "New creation").slice(0, 60), messages: [], updated: Date.now() };
+      chats.push(chat);
+      currentId = chat.id;
+    }
+    chat.messages.push({ role: "user", kind: "create", content: text, display: text, images: image ? [image.data] : [], files: [] });
+    const m = { role: "assistant", kind: "image", id: uid(), prompt: text };
+    chat.messages.push(m);
+    pending = [];
+    renderAttachments();
+    els.input.value = "";
+    autosize();
+    touch(m);
+    renderThread();
+    renderList();
+
+    if (image) {
+      m.image = image.data;
+      touch(m); rerender(m);
+      return make3D(m);
+    }
+
+    const seed = Math.floor(Math.random() * 1e9);
+    const url = `${IMAGE_API}${encodeURIComponent(text)}?width=1024&height=1024&seed=${seed}&nologo=true`;
+    m.status = "Creating your image…";
+    rerender(m);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(res.status === 429 ? "The free image service is busy. Try again in a minute." : `The image service returned an error (${res.status}).`);
+      const blob = await res.blob();
+      if (!blob.type.startsWith("image/")) throw new Error("The image service didn't send back an image. Try again.");
+      m.image = url;               // stable link (same prompt + seed) for chat history
+      m.note = "Image by Pollinations";
+    } catch (err) {
+      m.error = err.message.startsWith("The ") ? err.message : "Couldn't reach the image service. Check your internet connection.";
+    } finally {
+      delete m.status;
+      touch(m); rerender(m);
+    }
+  }
+
+  async function make3D(m) {
+    if (m.status) return;
+    m.error = undefined; m.showImage = false;
+    m.status = "Loading the 3D tools…";
+    rerender(m);
+    try {
+      const { Client, handle_file } = await import(GRADIO);
+      const blob = await (await fetch(m.image)).blob();
+      const token = store.get("hf", "");
+      let lastErr;
+      for (const space of SPACES_3D) {
+        try {
+          m.status = `Building a 3D model with ${space.label}. This usually takes 20 to 90 seconds…`;
+          rerender(m);
+          const app = await Client.connect(space.id, token ? { hf_token: token } : {});
+          const url = await space.run(app, blob, handle_file);
+          if (!url) throw new Error(`${space.label} didn't return a model.`);
+          m.model3d = url;
+          m.note = (m.image.startsWith("data:") ? "" : "Image by Pollinations · ") + `3D by ${space.label}`;
+          try {
+            m.status = "Downloading the 3D model…";
+            rerender(m);
+            const glb = await (await fetch(url)).blob();
+            liveModels.set(m.id, URL.createObjectURL(glb));
+          } catch { /* the viewer can still load it straight from the link */ }
+          return;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      throw lastErr;
+    } catch (err) {
+      const msg = String(err?.message || err || "");
+      m.error = /quota|GPU|exceeded|limit/i.test(msg)
+        ? "The free 3D servers have hit their limit for now. Try again later, or add a free Hugging Face token in Settings."
+        : "Couldn't build the 3D model" + (msg ? `: ${msg}` : ".");
+    } finally {
+      delete m.status;
+      touch(m); rerender(m);
+    }
+  }
+
   // ---------- settings ----------
   function openSettings() {
     els.keyInput.value = store.get("key", "");
     els.nameInput.value = store.get("name", "");
+    els.hfInput.value = store.get("hf", "");
     els.settings.showModal();
     (els.keyInput.value ? els.nameInput : els.keyInput).focus();
   }
@@ -829,6 +1077,7 @@ dialog input:focus { border-color: #4a4f8a; }
     if (els.settings.returnValue !== "save") return;
     store.set("key", els.keyInput.value.trim());
     store.set("name", els.nameInput.value.trim());
+    store.set("hf", els.hfInput.value.trim());
     renderGreeting();
     renderHint();
   });
@@ -849,6 +1098,7 @@ dialog input:focus { border-color: #4a4f8a; }
   els.search.addEventListener("input", renderList);
   els.modelSelect.addEventListener("change", () => { store.set("model", els.modelSelect.value); renderHint(); });
   els.attachBtn.onclick = () => els.fileInput.click();
+  els.createBtn.onclick = () => setCreateMode(!createMode);
   els.fileInput.onchange = async () => {
     for (const f of els.fileInput.files) {
       try { pending.push(await readFile(f)); } catch {}
