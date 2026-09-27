@@ -1389,7 +1389,7 @@ dialog input:focus { border-color: #4a4f8a; }
     "Never say a note or to-do is saved or done unless the tool succeeded. " +
     "To answer questions about notes, to-dos or reminders, check with find_notes, list_todos or list_reminders, since they change outside this chat. " +
     "delete_note, delete_todo and cancel_reminder ask the user to Allow or Deny first: just call the tool, and if they deny it, say it wasn't done. " +
-    "When the task is done, give a short, clear final answer.";
+    "When the task is done, give a short, clear final answer that says what you found or did, since the user may not open the steps.";
 
   const MATH_NAMES = new Set(["sqrt", "cbrt", "abs", "round", "floor", "ceil", "sin", "cos", "tan", "asin", "acos", "atan",
     "log", "log10", "log2", "exp", "pow", "min", "max", "PI", "E"]);
@@ -1740,6 +1740,10 @@ dialog input:focus { border-color: #4a4f8a; }
       if (!text) throw new Error("the note is empty");
       const title = (String(a.title || "").trim() || text.split("\n")[0]).slice(0, 80);
       const list = loadNotes();
+      // Saying "save my locker code" twice keeps one note (the model often saves again without looking).
+      const same = (t) => t.toLowerCase().replace(/[\s.!?]+/g, " ").trim();
+      const dup = list.find((x) => same(x.text) === same(text));
+      if (dup) return `Already saved as note ${dup.id}: "${dup.title}", so no new note was added.`;
       const n = { id: newId("n", list), title, text, created: Date.now(), updated: Date.now() };
       list.push(n);
       saveNotes(list);
