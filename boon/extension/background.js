@@ -12,6 +12,8 @@ const BOON = ["localhost", "127.0.0.1"];
 const SIGN_IN = ["accounts.google.com", "consent.youtube.com", "consent.google.com"];
 const CLASS = ["classroom.google.com", "docs.google.com", "drive.google.com"];
 const YOUTUBE = ["youtube.com", "youtu.be"];
+// Pages the student can type their own links into: a link opened from them isn't class material.
+const WRITABLE = ["docs.google.com", "drive.google.com", ...EMAIL, ...BOON];
 // Navigations the student typed or picked themselves, as opposed to following a link.
 const CHOSEN = new Set(["typed", "generated", "auto_bookmark", "keyword", "keyword_generated", "start_page"]);
 const BLOCKED = chrome.runtime.getURL("blocked.html");
@@ -26,6 +28,8 @@ const SETTLE_MS = 30000;
 const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; } };
 const matches = (host, list) => !!host && list.some((a) => host === a || host.endsWith("." + a));
 const isWeb = (url) => /^https?:\/\//i.test(url || "");
+// Google's link redirector (links in Classroom, Docs and Gmail pass through it): allowed as a hop, never pinned.
+const isHop = (url) => /^https?:\/\/(www\.)?google\.[a-z.]+\/url\?/i.test(url || "");
 
 // ----- the session: one copy in memory, saved to storage for the island and for restarts -----
 let cached, loading = null;
@@ -49,10 +53,14 @@ const saveSession = () => chrome.storage.local.set({ session: cached });
 async function endSession(reason) {
   const s = cached;
   cached = null;
-  await chrome.storage.local.remove("session");
+  // Every BOON tab hears about this through bridge.js, which watches this storage.
+  await chrome.storage.local.set({ session: null, lastEnd: { reason, at: Date.now() } });
   await chrome.alarms.clear("boon-focus-end");
   await chrome.alarms.clear("boon-quiz-end");
-  if (s?.boonTabId != null) chrome.tabs.sendMessage(s.boonTabId, { type: "ended", reason }).catch(() => {});
+  await chrome.storage.session.remove("quizKey");
+  // Give back what the session quieted: sound in old tabs, and windows it minimized.
+  for (const id of s?.muted || []) chrome.tabs.update(id, { muted: false }).catch(() => {});
+  for (const id of s?.minimized || []) chrome.windows.update(id, { state: "normal" }).catch(() => {});
 }
 
 // ----- what's allowed -----
@@ -72,6 +80,8 @@ function ytAllowed(url, lock) {
   if (!lock) return false;
   if (lock.v || lock.list) {
     if (u.hostname === "youtu.be") return !!lock.v && u.pathname.slice(1) === lock.v;
+    // The page the link itself points to, like a playlist page.
+    if (lock.path !== "/watch" && u.pathname === lock.path && (!lock.list || u.searchParams.get("list") === lock.list)) return true;
     if (u.pathname !== "/watch") return false;
     return (!!lock.list && u.searchParams.get("list") === lock.list) || (!!lock.v && u.searchParams.get("v") === lock.v);
   }
@@ -96,7 +106,7 @@ function tabRecord(s, tabId) {
 function recordAllows(rec, url) {
   if (!rec || !isWeb(url)) return false;
   const host = hostOf(url);
-  if (!matches(host, rec.hosts)) return false;
+  if (!rec.hosts.includes(host)) return false;   // exactly the sites it landed on, not their subdomains
   return !matches(host, YOUTUBE) || ytAllowed(url, rec.yt);
 }
 
@@ -111,6 +121,7 @@ function navAllowed(s, tabId, url, { chosen = false, redirect = false } = {}) {
   // through sign-in pages while it settles; after that it stays on the sites it landed on.
   const settling = Date.now() < rec.settleUntil && (!rec.landed || redirect);
   if (!chosen && isWeb(url) && settling) {
+    if (isHop(url)) return true;   // the redirect that follows decides
     const host = hostOf(url);
     if (matches(host, YOUTUBE)) {
       if (/^\/shorts(\/|$)/i.test(new URL(url).pathname)) return false;
@@ -128,12 +139,25 @@ function navAllowed(s, tabId, url, { chosen = false, redirect = false } = {}) {
 function tabAllowed(s, tab) {
   if (s.quiz) return tab.id === s.quiz.tabId || (tab.pendingUrl || tab.url || "").startsWith(QUIZ);
   if (tab.id === s.workTabId || s.okTabs?.[tab.id]) return true;
-  // A link opened from class in a new tab belongs to the class.
-  if (s.mode === "school" && tab.openerTabId != null && (tab.openerTabId === s.workTabId || s.okTabs?.[tab.openerTabId])) {
-    adoptTab(s, tab.id);
-    return true;
-  }
   return openToAll(s, tab.pendingUrl || tab.url);
+}
+// Same, but also recognises a link from class that opened in a new tab and is shown before the add-on
+// hears where it came from.
+async function allowedNow(s, tab) {
+  if (tabAllowed(s, tab)) return true;
+  const u = tab.pendingUrl || tab.url || "";
+  if (s.quiz || tab.openerTabId == null || /^chrome/i.test(u) || !(await fromClass(s, tab.openerTabId))) return false;
+  adoptTab(s, tab.id);
+  return true;
+}
+// Is this tab showing the class (or class material), so links it opens are class material too?
+async function fromClass(s, sourceTabId) {
+  if (s.mode !== "school" || (sourceTabId !== s.workTabId && !s.okTabs[sourceTabId])) return false;
+  const src = await chrome.tabs.get(sourceTabId).catch(() => null);
+  const host = hostOf(src?.url || "");
+  if (!host) return false;
+  if (sourceTabId === s.workTabId) return host === "classroom.google.com" || host === hostOf(s.url);
+  return !matches(host, WRITABLE);
 }
 function adoptTab(s, tabId) {
   if (s.okTabs[tabId]) return;
@@ -160,7 +184,13 @@ async function openTab(url, nextTo = null) {
   try {
     // Opened next to the work tab, Chrome goes back to it when this tab closes.
     const near = nextTo != null && await chrome.tabs.get(nextTo).catch(() => null);
-    const tab = await chrome.tabs.create(near ? { url, active: true, windowId: near.windowId, openerTabId: near.id } : { url, active: true });
+    let tab;
+    try {
+      tab = await chrome.tabs.create(near ? { url, active: true, windowId: near.windowId, openerTabId: near.id } : { url, active: true });
+    } catch {
+      // No Chrome window is open (on a Mac, Chrome keeps running after the last one closes): open one.
+      tab = (await chrome.windows.create({ url, focused: true })).tabs[0];
+    }
     await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
     return tab;
   } finally {
@@ -200,6 +230,30 @@ async function bringBack() {
   if (!tab) return reopen();
   await retry(() => chrome.tabs.update(tab.id, { active: true }));
   await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  await sweep(s);
+}
+
+// Tabs the lock can't switch away from on their own: silence ones playing sound, and minimize other
+// windows that show a locked page (a video in a second window, or anything during the question).
+async function sweep(s) {
+  const mainId = s.quiz ? s.quiz.tabId : s.workTabId;
+  const main = await chrome.tabs.get(mainId ?? -1).catch(() => null);
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  let changed = false;
+  for (const t of tabs) {
+    if (t.id === mainId || await allowedNow(s, t)) continue;
+    if (t.audible && !t.mutedInfo?.muted) {
+      await chrome.tabs.update(t.id, { muted: true }).catch(() => {});
+      (s.muted ||= []).push(t.id);
+      changed = true;
+    }
+    if (t.active && main && t.windowId !== main.windowId) {
+      await chrome.windows.update(t.windowId, { state: "minimized" }).catch(() => {});
+      if (!(s.minimized ||= []).includes(t.windowId)) s.minimized.push(t.windowId);
+      changed = true;
+    }
+  }
+  if (changed && cached === s) await saveSession();
 }
 
 async function block(s, tabId) {
@@ -223,7 +277,7 @@ async function checkNav(tabId, url, how = {}) {
   if (!s) return;
   if (navAllowed(s, tabId, url, how)) {
     const rec = tabRecord(s, tabId);
-    if (rec && how.commit && !how.redirect && isWeb(url) && !rec.landed) { rec.landed = true; await saveSession(); }
+    if (rec && how.commit && !how.redirect && isWeb(url) && !isHop(url) && !rec.landed) { rec.landed = true; await saveSession(); }
     if (tabId === s.workTabId && isWeb(url)) { s.lastOk = url; await saveSession(); }
     return;
   }
@@ -249,7 +303,7 @@ async function startQuiz(s) {
   cached.quiz.tabId = tab.id;
   await saveSession();
   await chrome.alarms.create("boon-quiz-end", { when: s.quiz.until + 5000 });
-  tellBoon(s, { type: "quiz", on: true });
+  await sweep(s);
   return { ok: true };
 }
 
@@ -260,11 +314,6 @@ async function endQuiz(s, solved, last = null) {
   s.quiz = null;
   s.lastQuiz = last;
   await saveSession();
-  tellBoon(s, { type: "quiz", on: false });
-}
-
-function tellBoon(s, msg) {
-  if (s.boonTabId != null) chrome.tabs.sendMessage(s.boonTabId, msg).catch(() => {});
 }
 
 async function answerQuiz(value) {
@@ -288,13 +337,25 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (type === "ping") return { ok: true };
     if (type === "status") {
       const s = await getSession();
-      return { ok: true, session: s && { mode: s.mode, url: s.url, text: s.text, rid: s.rid, start: s.start, end: s.end, minEnd: s.minEnd, quiz: !!s.quiz } };
+      return {
+        ok: true, incognito: await chrome.extension.isAllowedIncognitoAccess(),
+        session: s && { mode: s.mode, url: s.url, text: s.text, rid: s.rid, start: s.start, end: s.end, minEnd: s.minEnd, quiz: !!s.quiz, workTab: sender.tab?.id === s.workTabId },
+      };
+    }
+    if (type === "restoreWork") {
+      // The lock page in the work tab: load the work again.
+      const s = await getSession();
+      if (!s || sender.tab?.id !== s.workTabId) return { ok: false };
+      s.resets = [];
+      await saveSession();
+      await retry(() => chrome.tabs.update(s.workTabId, { url: s.lastOk || s.url })).catch(() => {});
+      return { ok: true };
     }
     if (type === "bringBack") { const s = await getSession(); if (s) await bringBack(); return { ok: !!s }; }
     if (type === "check") {
       // The island saw its tab come into view: send the student back if this tab isn't allowed.
       const s = await getSession();
-      if (s && sender.tab && !tabAllowed(s, sender.tab)) await bringBack();
+      if (s && sender.tab && !(await allowedNow(s, sender.tab))) await bringBack();
       return { ok: true };
     }
     if (type === "turnOff") {
@@ -351,6 +412,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       await saveSession();
       await chrome.alarms.create("boon-focus-end", { when: s.end });
       showIslandEverywhere();
+      await sweep(s);
       return { ok: true, start: s.start, end: s.end, minEnd: s.minEnd, mode };
     }
     return null;
@@ -381,7 +443,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   const s = await getSession();
   if (!s) return;
   const tab = await chrome.tabs.get(tabId).catch(() => null);
-  if (tab && !tabAllowed(s, tab)) await bringBack();
+  if (tab && !(await allowedNow(s, tab))) await bringBack();
 });
 
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
@@ -389,7 +451,7 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
   const s = await getSession();
   if (!s) return;
   const [tab] = await chrome.tabs.query({ active: true, windowId });
-  if (tab && !tabAllowed(s, tab)) await bringBack();
+  if (tab && !(await allowedNow(s, tab))) await bringBack();
 });
 
 // Dropping a dragged tab into another window, or moving it, can land on a locked tab.
@@ -397,7 +459,7 @@ const recheckWindow = async (windowId) => {
   const s = await getSession();
   if (!s) return;
   const [tab] = await chrome.tabs.query({ active: true, windowId }).catch(() => []);
-  if (tab && !tabAllowed(s, tab)) await bringBack();
+  if (tab && !(await allowedNow(s, tab))) await bringBack();
 };
 chrome.tabs.onAttached.addListener((tabId, { newWindowId }) => recheckWindow(newWindowId));
 chrome.tabs.onMoved.addListener((tabId, { windowId }) => recheckWindow(windowId));
@@ -407,18 +469,23 @@ chrome.tabs.onCreated.addListener(async (tab) => {
   const s = await getSession();
   if (!s || tab.id === s.workTabId || (tab.pendingUrl || tab.url || "").startsWith(OWN)) return;
   if (s.quiz) {
+    // The question's own tab is gone (its window was closed): show the question here instead.
+    if (!(await chrome.tabs.get(s.quiz.tabId ?? -1).catch(() => null))) {
+      s.quiz.tabId = tab.id;
+      await saveSession();
+      await retry(() => chrome.tabs.update(tab.id, { url: QUIZ })).catch(() => {});
+      return;
+    }
     await chrome.tabs.remove(tab.id).catch(() => {});
     await bringBack();
-    return;
   }
-  // A link opened from the class page (or a page opened from it) is part of the class.
-  if (s.mode === "school" && tab.openerTabId != null && (tab.openerTabId === s.workTabId || s.okTabs[tab.openerTabId])) adoptTab(s, tab.id);
 });
 
+// A link from the class page (or from class material) that opens a new tab is class material too.
 chrome.webNavigation.onCreatedNavigationTarget.addListener(async ({ sourceTabId, tabId }) => {
   const s = await getSession();
-  if (!s || s.mode !== "school" || s.quiz || s.okTabs[tabId]) return;
-  if (sourceTabId === s.workTabId || s.okTabs[sourceTabId]) adoptTab(s, tabId);
+  if (!s || s.quiz || s.okTabs[tabId]) return;
+  if (await fromClass(s, sourceTabId)) adoptTab(s, tabId);
 });
 
 chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, url, transitionType, transitionQualifiers = [] }) => {
@@ -462,8 +529,12 @@ chrome.runtime.onStartup.addListener(async () => {
   s.boonTabId = null;
   s.quiz = null;
   await saveSession();
+  s.muted = [];
+  s.minimized = [];
   await chrome.alarms.create("boon-focus-end", { when: s.end });
   await reopen();
+  const now = await getSession();
+  if (now) await sweep(now);
 });
 
 // Reloading the extension mid-session keeps the session; put the timer and the island back.

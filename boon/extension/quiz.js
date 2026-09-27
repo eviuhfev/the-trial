@@ -40,17 +40,25 @@ function tick() {
   if (!left && !finished) load();
 }
 
+function showOver() {
+  $("head").textContent = "Focus is over";
+  $("question").textContent = "";
+  $("prompt").textContent = "";
+  $("msg").className = "msg good";
+  $("msg").textContent = "The timer ran out, so you're free. This tab closes by itself.";
+  $("note").textContent = "";
+  closeSoon(4000, false);
+}
+
+// The focus timer can run out while the question is open.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.session && !changes.session.newValue && changes.lastEnd?.newValue?.reason === "time" && !finished) showOver();
+});
+
 async function load() {
   const r = await send({ type: "quizStatus" });
   if (!r?.active) {
-    if (r?.over) {
-      $("head").textContent = "Focus is over";
-      $("question").textContent = "";
-      $("msg").textContent = "You're free. This tab closes by itself.";
-      $("note").textContent = "";
-      closeSoon(3000, false);
-      return;
-    }
+    if (r?.over) { showOver(); return; }
     $("question").innerHTML = $("question").innerHTML === "Loading…" ? "" : $("question").innerHTML;
     showEnd(r);
     return;
@@ -72,6 +80,7 @@ $("form").onsubmit = async (e) => {
   const r = await send({ type: "answer", value });
   $("submit").disabled = false;
   if (!r) return;
+  if (r.over) { showOver(); return; }
   if (r.done) { showEnd(r.lost ? { answer: "" } : r); return; }
   $("msg").className = "msg bad";
   $("msg").textContent = "Not quite. Try again.";

@@ -74,7 +74,8 @@ until you press Snooze or Done.
 - **Hagwon** opens a YouTube mix (change it in Settings) for 25 minutes. YouTube stays on that mix: no Shorts, no
   other videos, no home page. A calculator and BOON are also allowed.
 
-Anything else sends you back, and `chrome://` pages (like the extensions page) are blocked during focus.
+Anything else sends you back, and `chrome://` pages (like the extensions page) are blocked during focus. Other
+windows showing a locked site are minimized and tabs playing sound are muted until focus ends.
 
 **The island.** A small floating pill at the top of every page shows the time left, and you can drag it anywhere.
 Its **Turn off** button (or Turn off in BOON's focus bar) ends focus early, but only after you solve a hard
@@ -91,6 +92,7 @@ The locking and the island need the **BOON Focus** Chrome add-on in `boon/extens
 4. Reload BOON.
 
 After pulling a new version of BOON, click the reload arrow on the BOON Focus card in `chrome://extensions`.
+To lock Incognito windows too, click **Details** on the card and turn on **Allow in Incognito**.
 Without the add-on, School and Hagwon still open the link and run the timer, and BOON asks you to go back if you
 return early, but it can't stop you switching tabs. The add-on only acts during a focus session. It works inside
 Chrome only: other Mac apps (like Calculator) are never blocked.

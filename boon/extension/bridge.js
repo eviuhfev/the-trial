@@ -13,3 +13,12 @@ window.addEventListener("message", (e) => {
 chrome.runtime.onMessage.addListener((event) => {
   window.postMessage({ source: "boon-focus", event }, "*");
 });
+
+// Every BOON tab hears when focus ends or the turn-off question opens or closes.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes.session) return;
+  const was = changes.session.oldValue, now = changes.session.newValue;
+  const post = (event) => window.postMessage({ source: "boon-focus", event }, "*");
+  if (was && !now) post({ type: "ended", reason: changes.lastEnd?.newValue?.reason || "" });
+  else if (now && !!was?.quiz !== !!now.quiz) post({ type: "quiz", on: !!now.quiz });
+});

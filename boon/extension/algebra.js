@@ -158,6 +158,8 @@
   }
 
   function checkAnswer(q, text) {
+    // One answer: "2,187" is a thousands separator, not two numbers.
+    if (q.answers.length === 1) text = String(text || "").replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
     const got = parseNumbers(text);
     const want = q.answers.map(([n, d]) => n / d);
     if (got.length !== want.length) return false;

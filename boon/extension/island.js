@@ -100,10 +100,13 @@
     if (host.parentNode !== parent) { try { parent.appendChild(host); } catch { document.documentElement.appendChild(host); } }
   }
 
+  // Gone for good until the next session: a fresh island is built then.
+  function teardown() { stopTimer(); host?.remove(); host = ui = null; confirming = false; }
+
   function render() {
-    if (!alive()) { stopTimer(); host?.remove(); return; }
+    if (!alive()) { teardown(); return; }
     const live = session && Date.now() < session.end;
-    if (!live) { host?.remove(); stopTimer(); confirming = false; return; }
+    if (!live) { teardown(); return; }
     if (!host) build();
     mount();
     ui.icon.textContent = session.quiz ? "🧮" : session.mode === "hagwon" ? "🎧" : "🏫";
@@ -112,6 +115,7 @@
     ui.off.hidden = !!session.quiz;
     ui.off.textContent = confirming ? "Cancel" : "Turn off";
     ui.confirm.hidden = !confirming || !!session.quiz;
+    place();   // keep the whole island on screen as it grows or shrinks
     if (!timer) timer = setInterval(render, 1000);
   }
   const stopTimer = () => { clearInterval(timer); timer = 0; };
@@ -129,7 +133,7 @@
     session = changes.session.newValue || null;
     render();
   });
-  document.addEventListener("fullscreenchange", () => { if (host) { mount(); place(); } });
+  document.addEventListener("fullscreenchange", () => { if (host && session && alive()) { mount(); place(); } });
   addEventListener("resize", place);
   // Coming into view: let the add-on check this tab is allowed (catches tricks like dragging tabs).
   const check = () => { if (document.visibilityState === "visible" && session && alive()) send({ type: "check" }); };

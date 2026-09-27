@@ -1743,7 +1743,8 @@ dialog input:focus { border-color: #4a4f8a; }
   const HAGWON_DEFAULT = "https://www.youtube.com/watch?v=UGYjHg8Xu7U&list=RDUGYjHg8Xu7U&start_radio=1";
   const HAGWON_MINUTES = 25;
   const hasLock = () => !!document.documentElement.dataset.boonFocus;
-  const LOCK_VERSION = "1.1.0";   // boon/extension/manifest.json
+  const LOCK_VERSION = "1.1.1";   // boon/extension/manifest.json
+  let lockIncognito = true;       // BOON Focus may run in Incognito windows
   let extSeq = 0;
   const extWaiting = new Map();
   function ext(msg) {
@@ -1773,6 +1774,7 @@ dialog input:focus { border-color: #4a4f8a; }
     const res = await ext({ type: "status" });
     if (!res) return;   // no answer: leave things as they are
     const s = "session" in res ? res.session : res, f = loadFocus();   // add-on 1.0 sent the session itself
+    if ("incognito" in res) lockIncognito = res.incognito;
     els.quizLock.hidden = !s?.quiz;
     if (s && !f) {
       store.set("focus", { rid: s.rid, text: s.text, link: s.url, minutes: Math.round((s.end - s.start) / 60000), start: s.start, end: s.end, minEnd: s.minEnd, locked: true, mode: s.mode });
@@ -2056,7 +2058,8 @@ dialog input:focus { border-color: #4a4f8a; }
     els.lockNote.innerHTML = hasLock() && document.documentElement.dataset.boonFocus !== LOCK_VERSION
       ? "🔄 BOON Focus has an update: open <code>chrome://extensions</code>, click the reload arrow on BOON Focus, then reload BOON."
       : hasLock()
-      ? "🔒 BOON Focus is on: School and Hagwon lock your other tabs until the timer ends, and the island shows the time left."
+      ? "🔒 BOON Focus is on: School and Hagwon lock your other tabs until the timer ends, and the island shows the time left." +
+        (lockIncognito ? "" : " Incognito windows aren't locked yet: on the BOON Focus card in <code>chrome://extensions</code>, click <b>Details</b> and turn on <b>Allow in Incognito</b>.")
       : "🔓 To lock tabs during School and Hagwon, add BOON Focus to Chrome once: open <code>chrome://extensions</code>, turn on <b>Developer mode</b>, click <b>Load unpacked</b> and pick the <code>boon/extension</code> folder, then reload BOON.";
     els.reminderList.innerHTML = "";
     if (!upcoming.length) {
@@ -2360,6 +2363,7 @@ dialog input:focus { border-color: #4a4f8a; }
       if (!confirm("Turning off early gives you a hard algebra question. You have 5 minutes and 3 tries, and every other tab (BOON too) stays locked until you finish. Start the question?")) return;
       const res = await ext({ type: "turnOff" });
       if (res?.over) finishFocus(true);
+      else if (!res || res.ok === undefined) alert("BOON Focus didn't answer. Open chrome://extensions, click the reload arrow on BOON Focus, then reload BOON and try again.");
       return;
     }
     finishFocus(true);
