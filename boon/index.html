@@ -1743,7 +1743,7 @@ dialog input:focus { border-color: #4a4f8a; }
   const HAGWON_DEFAULT = "https://www.youtube.com/watch?v=UGYjHg8Xu7U&list=RDUGYjHg8Xu7U&start_radio=1";
   const HAGWON_MINUTES = 25;
   const hasLock = () => !!document.documentElement.dataset.boonFocus;
-  const LOCK_VERSION = "1.1.1";   // boon/extension/manifest.json
+  const LOCK_VERSION = "1.1.2";   // boon/extension/manifest.json
   let lockIncognito = true;       // BOON Focus may run in Incognito windows
   let extSeq = 0;
   const extWaiting = new Map();
@@ -1854,12 +1854,14 @@ dialog input:focus { border-color: #4a4f8a; }
     const mins = Math.round((Math.min(Date.now(), f.end) - f.start) / 60000);
     const card = document.createElement("div");
     card.className = "alert-card";
-    card.innerHTML = `<div class="alert-icon" aria-hidden="true">🎉</div><div class="alert-main"><div class="alert-title">${reason === "quiz" ? "Focus off" : "Focus done"}</div>
+    const safety = reason === "safety";
+    card.innerHTML = `<div class="alert-icon" aria-hidden="true">${safety ? "🛟" : "🎉"}</div><div class="alert-main"><div class="alert-title">${reason === "quiz" ? "Focus off" : safety ? "Focus stopped" : "Focus done"}</div>
       <div class="alert-text"></div><div class="alert-time"></div>
       <div class="alert-actions"><button type="button" class="chip-btn primary" data-act="close">Nice</button></div></div>`;
     card.querySelector(".alert-text").textContent = f.text;
     card.querySelector(".alert-time").textContent = reason === "quiz"
       ? `You solved the question after ${mins} minute${mins === 1 ? "" : "s"} of focus.`
+      : safety ? "The lock couldn't open your work tab, so it turned itself off to keep Chrome working."
       : `${mins} minute${mins === 1 ? "" : "s"} of focus. You can take a break.`;
     card.onclick = (e) => { if (e.target.dataset?.act) { card.remove(); if (!els.alerts.children.length) document.title = baseTitle; } };
     els.alerts.appendChild(card);

@@ -40,19 +40,22 @@ function tick() {
   if (!left && !finished) load();
 }
 
-function showOver() {
-  $("head").textContent = "Focus is over";
+function showOver(reason = "time") {
+  $("head").textContent = reason === "safety" ? "Focus stopped" : "Focus is over";
   $("question").textContent = "";
   $("prompt").textContent = "";
   $("msg").className = "msg good";
-  $("msg").textContent = "The timer ran out, so you're free. This tab closes by itself.";
+  $("msg").textContent = reason === "safety"
+    ? "The lock turned itself off to keep Chrome working. This tab closes by itself."
+    : "The timer ran out, so you're free. This tab closes by itself.";
   $("note").textContent = "";
   closeSoon(4000, false);
 }
 
 // The focus timer can run out while the question is open.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.session && !changes.session.newValue && changes.lastEnd?.newValue?.reason === "time" && !finished) showOver();
+  const reason = changes.lastEnd?.newValue?.reason;
+  if (area === "local" && changes.session && !changes.session.newValue && (reason === "time" || reason === "safety") && !finished) showOver(reason);
 });
 
 async function load() {

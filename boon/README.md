@@ -97,6 +97,11 @@ Without the add-on, School and Hagwon still open the link and run the timer, and
 return early, but it can't stop you switching tabs. The add-on only acts during a focus session. It works inside
 Chrome only: other Mac apps (like Calculator) are never blocked.
 
+**Safety stop.** The add-on never closes a tab or window. If it can't open or show your work tab (or the question)
+three times within two minutes, it turns focus off by itself and BOON shows "Focus stopped", so Chrome keeps working.
+If Chrome ever still gets stuck, quit it (⌘Q), rename the `boon/extension` folder (for example to `extension-off`) and
+open Chrome again; rename it back and click reload on the card to turn the add-on on again.
+
 Agent mode needs a model that can call tools. Gemma 3 can't, so BOON uses Qwen3 on your computer:
 
 ```sh

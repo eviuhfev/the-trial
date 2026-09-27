@@ -30,6 +30,8 @@ const matches = (host, list) => !!host && list.some((a) => host === a || host.en
 const isWeb = (url) => /^https?:\/\//i.test(url || "");
 // Google's link redirector (links in Classroom, Docs and Gmail pass through it): allowed as a hop, never pinned.
 const isHop = (url) => /^https?:\/\/(www\.)?google\.[a-z.]+\/url\?/i.test(url || "");
+// The tab with this id, or null. (chrome.tabs.get throws on the spot, not later, for an id like -1.)
+const getTab = async (id) => { try { return id == null ? null : await chrome.tabs.get(id); } catch { return null; } };
 
 // ----- the session: one copy in memory, saved to storage for the island and for restarts -----
 let cached, loading = null;
@@ -61,6 +63,23 @@ async function endSession(reason) {
   // Give back what the session quieted: sound in old tabs, and windows it minimized.
   for (const id of s?.muted || []) chrome.tabs.update(id, { muted: false }).catch(() => {});
   for (const id of s?.minimized || []) chrome.windows.update(id, { state: "normal" }).catch(() => {});
+}
+
+// ----- the safety stop -----
+// If the lock can't open or show the work (or the question), it would only leave locked pages, so after a few
+// failures it turns focus off instead of trapping Chrome. Failures that all land within a few seconds (Chrome
+// quitting) don't count: the stop needs them spread over at least SAFETY_SPREAD_MS.
+const SAFETY_FAILS = 3, SAFETY_WINDOW_MS = 120000, SAFETY_SPREAD_MS = 10000;
+let failures = [];
+async function trouble() {
+  if (!cached) return;
+  const now = Date.now();
+  failures = failures.filter((t) => now - t < SAFETY_WINDOW_MS);
+  failures.push(now);
+  if (failures.length >= SAFETY_FAILS && now - failures[0] >= SAFETY_SPREAD_MS) {
+    failures = [];
+    await endSession("safety");
+  }
 }
 
 // ----- what's allowed -----
@@ -153,7 +172,7 @@ async function allowedNow(s, tab) {
 // Is this tab showing the class (or class material), so links it opens are class material too?
 async function fromClass(s, sourceTabId) {
   if (s.mode !== "school" || (sourceTabId !== s.workTabId && !s.okTabs[sourceTabId])) return false;
-  const src = await chrome.tabs.get(sourceTabId).catch(() => null);
+  const src = await getTab(sourceTabId);
   const host = hostOf(src?.url || "");
   if (!host) return false;
   if (sourceTabId === s.workTabId) return host === "classroom.google.com" || host === hostOf(s.url);
@@ -183,13 +202,13 @@ async function openTab(url, nextTo = null) {
   selfCreating++;
   try {
     // Opened next to the work tab, Chrome goes back to it when this tab closes.
-    const near = nextTo != null && await chrome.tabs.get(nextTo).catch(() => null);
+    const near = await getTab(nextTo);
     let tab;
     try {
       tab = await chrome.tabs.create(near ? { url, active: true, windowId: near.windowId, openerTabId: near.id } : { url, active: true });
     } catch {
       // No Chrome window is open (on a Mac, Chrome keeps running after the last one closes): open one.
-      tab = (await chrome.windows.create({ url, focused: true })).tabs[0];
+      try { tab = (await chrome.windows.create({ url, focused: true })).tabs[0]; } catch (e) { await trouble(); throw e; }
     }
     await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
     return tab;
@@ -204,15 +223,16 @@ function reopen() {
     const s = await getSession();
     if (!s) return;
     if (s.quiz) {
-      if (!(await chrome.tabs.get(s.quiz.tabId ?? -1).catch(() => null))) {
-        const tab = await openTab(QUIZ, s.workTabId);
-        if (cached?.quiz) { cached.quiz.tabId = tab.id; await saveSession(); }
+      if (!(await getTab(s.quiz.tabId))) {
+        const tab = await openTab(QUIZ, s.workTabId).catch(() => null);
+        if (tab && cached?.quiz) { cached.quiz.tabId = tab.id; await saveSession(); }
       }
       return;
     }
-    if (!(await chrome.tabs.get(s.workTabId ?? -1).catch(() => null))) {
+    if (!(await getTab(s.workTabId))) {
       s.workTabId = null;   // so the new tab's own first load isn't caught while it is being made
-      const tab = await openTab(s.url);
+      const tab = await openTab(s.url).catch(() => null);
+      if (!tab) return;
       s.workTabId = tab.id;
       s.work = { hosts: [hostOf(s.url)], yt: s.yt, settleUntil: Date.now() + SETTLE_MS };
       s.lastOk = s.url;
@@ -226,9 +246,9 @@ async function bringBack() {
   const s = await getSession();
   if (!s) return;
   const id = s.quiz ? s.quiz.tabId : s.workTabId;
-  const tab = await chrome.tabs.get(id ?? -1).catch(() => null);
+  const tab = await getTab(id);
   if (!tab) return reopen();
-  await retry(() => chrome.tabs.update(tab.id, { active: true }));
+  try { await retry(() => chrome.tabs.update(tab.id, { active: true })); } catch { await trouble(); return; }
   await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
   await sweep(s);
 }
@@ -237,7 +257,7 @@ async function bringBack() {
 // windows that show a locked page (a video in a second window, or anything during the question).
 async function sweep(s) {
   const mainId = s.quiz ? s.quiz.tabId : s.workTabId;
-  const main = await chrome.tabs.get(mainId ?? -1).catch(() => null);
+  const main = await getTab(mainId);
   const tabs = await chrome.tabs.query({}).catch(() => []);
   let changed = false;
   for (const t of tabs) {
@@ -283,7 +303,7 @@ async function checkNav(tabId, url, how = {}) {
   }
   // A background tab reloading (tabs restored after a restart) is left alone; it's caught when shown.
   if (how.reload && tabId !== s.workTabId && !tabRecord(s, tabId)) {
-    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    const tab = await getTab(tabId);
     if (!tab?.active) return;
   }
   await block(s, tabId);
@@ -298,7 +318,8 @@ async function startQuiz(s) {
   s.quiz = { ...question, until: Date.now() + QUIZ_MINUTES * 60000, tries: 0, tabId: null };
   s.lastQuiz = null;
   await saveSession();
-  const tab = await openTab(QUIZ, s.workTabId);
+  const tab = await openTab(QUIZ, s.workTabId).catch(() => null);
+  if (!tab) { if (cached?.quiz) await endQuiz(cached, false); return { ok: false, error: "Couldn't open the question." }; }
   if (!cached?.quiz) return { ok: false };
   cached.quiz.tabId = tab.id;
   await saveSession();
@@ -405,6 +426,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
           : [...(matches(host, YOUTUBE) ? [] : [host]), ...CLASS, ...EMAIL, ...CALCULATOR, ...BOON, ...SIGN_IN],
       };
       s.work = { hosts: [host], yt: s.yt, settleUntil: now + SETTLE_MS };
+      failures = [];
       // The work tab is made before the session is live, so the locks don't catch it.
       const tab = await openTab(url);
       s.workTabId = tab.id;
@@ -442,7 +464,7 @@ async function showIslandEverywhere() {
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   const s = await getSession();
   if (!s) return;
-  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  const tab = await getTab(tabId);
   if (tab && !(await allowedNow(s, tab))) await bringBack();
 });
 
@@ -470,14 +492,14 @@ chrome.tabs.onCreated.addListener(async (tab) => {
   if (!s || tab.id === s.workTabId || (tab.pendingUrl || tab.url || "").startsWith(OWN)) return;
   if (s.quiz) {
     // The question's own tab is gone (its window was closed): show the question here instead.
-    if (!(await chrome.tabs.get(s.quiz.tabId ?? -1).catch(() => null))) {
+    if (!(await getTab(s.quiz.tabId))) {
       s.quiz.tabId = tab.id;
       await saveSession();
       await retry(() => chrome.tabs.update(tab.id, { url: QUIZ })).catch(() => {});
       return;
     }
-    await chrome.tabs.remove(tab.id).catch(() => {});
-    await bringBack();
+    // Locked, never closed: closing it would also close a new window, and Chrome would seem not to open.
+    await block(s, tab.id);
   }
 });
 
@@ -512,10 +534,15 @@ chrome.tabs.onUpdated.addListener(async (tabId, info) => {
   if (s) await block(s, tabId);
 });
 
-chrome.tabs.onRemoved.addListener(async (tabId) => {
+chrome.tabs.onRemoved.addListener(async (tabId, { isWindowClosing }) => {
   const s = await getSession();
   if (!s) return;
-  if (tabId === s.workTabId || (s.quiz && tabId === s.quiz.tabId)) { await reopen(); return; }
+  if (tabId === s.workTabId || (s.quiz && tabId === s.quiz.tabId)) {
+    // Its window closed: wait a moment, so quitting Chrome isn't met with a new window.
+    if (isWindowClosing) await new Promise((r) => setTimeout(r, 1000));
+    await reopen();
+    return;
+  }
   if (s.okTabs[tabId]) { delete s.okTabs[tabId]; await saveSession(); }
 });
 
