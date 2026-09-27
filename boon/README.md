@@ -96,10 +96,11 @@ To lock Incognito windows too, click **Details** on the card and turn on **Allow
 Without the add-on, School and Hagwon still open the link and run the timer, and BOON asks you to go back if you
 return early, but it can't stop you switching tabs. The add-on only acts during a focus session.
 
-**Leaving Chrome.** If you swipe to another desktop or app (three-finger swipe, ⌘Tab, the Dock) during focus, the add-on
-brings Chrome back after about 2 seconds, and the island counts how many times you left. It can't block the swipe
-itself, and other Mac apps (including Calculator) aren't allowed during focus: use Desmos or calculator.net in Chrome.
-Quitting Chrome (⌘Q) always gets you out, so the add-on can never trap your Mac.
+**Leaving Chrome.** During focus your work window goes full screen, and if you swipe to another desktop or app
+(three-finger swipe, ⌘Tab, the Dock) the add-on brings Chrome back right away and keeps doing so until focus ends.
+The island counts how many times you left. It can't stop the swipe itself, or a window on a second screen. Other Mac
+apps (including Calculator) aren't allowed during focus: use Desmos or calculator.net in Chrome. Quitting Chrome (⌘Q)
+always gets you out, so the add-on can never trap your Mac. When focus ends, the window goes back to how it was.
 
 **Safety stop.** The add-on never closes a tab or window. If it can't open or show your work tab (or the question)
 three times within two minutes, it turns focus off by itself and BOON shows "Focus stopped", so Chrome keeps working.

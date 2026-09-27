@@ -64,6 +64,9 @@ async function endSession(reason) {
   // Give back what the session quieted: sound in old tabs, and windows it minimized.
   for (const id of s?.muted || []) chrome.tabs.update(id, { muted: false }).catch(() => {});
   for (const id of s?.minimized || []) chrome.windows.update(id, { state: "normal" }).catch(() => {});
+  for (const [id, state] of Object.entries(s?.full || {})) {
+    chrome.windows.get(+id).then((w) => w.state === "fullscreen" && chrome.windows.update(+id, { state })).catch(() => {});
+  }
 }
 
 // ----- the safety stop -----
@@ -452,6 +455,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       await saveSession();
       await chrome.alarms.create("boon-focus-end", { when: s.end });
       showIslandEverywhere();
+      await fullScreen(s, tab.windowId);
       await sweep(s);
       return { ok: true, start: s.start, end: s.end, minEnd: s.minEnd, mode };
     }
@@ -488,34 +492,65 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 
 // ----- leaving Chrome -----
 // A three-finger swipe to another desktop, ⌘Tab or the Dock takes the student out of Chrome. Chrome can't see
-// other apps, only that none of its windows has focus, so after a short grace it brings its window back (on a
-// Mac that also switches back to Chrome's desktop). Quitting Chrome (⌘Q) still ends this, so it can never trap
-// the Mac, and if Chrome can't bring itself to the front it stops trying until the student comes back.
-const AWAY_GRACE_MS = 2000, AWAY_RETRY_MS = 3000, AWAY_TRIES = 10;
-let awayTimer = 0, awayTries = 0;
+// other apps, only that none of its windows has focus, so it brings its window back right away (on a Mac that
+// also switches back to Chrome's desktop) and keeps asking until it's back, since macOS may refuse while they
+// type in another app. Pull-backs only move focus: they never open tabs or windows or count toward the safety
+// stop, and quitting Chrome (⌘Q) still ends them, so they can never trap the Mac.
+const AWAY_FIRST_MS = 100, AWAY_FAST_MS = 400, AWAY_SLOW_MS = 1500, AWAY_FAST_TRIES = 10;
+let away = false, awayTimer = 0, awayTries = 0;
 function leftChrome() {
-  if (awayTimer) return;
+  if (away) return;
+  away = true;
   awayTries = 0;
-  awayTimer = setTimeout(pullBack, AWAY_GRACE_MS);
+  clearTimeout(awayTimer);
+  awayTimer = setTimeout(pullBack, AWAY_FIRST_MS);
 }
 function cameBack() {
+  away = false;
   clearTimeout(awayTimer);
   awayTimer = 0;
 }
 async function pullBack() {
   awayTimer = 0;
+  if (!away) return;
   const s = await getSession();
-  if (!s) return;
+  if (!s) { cameBack(); return; }
   const wins = await chrome.windows.getAll().catch(() => null);
-  if (!wins || wins.some((w) => w.focused) || awayTries >= AWAY_TRIES) return;
-  if (awayTries++ === 0) { s.left = (s.left || 0) + 1; await saveSession(); }
-  // Back to the window they left if it shows an allowed page (a file picker may be open there); otherwise to
-  // the work, or the question.
+  if (wins?.some((w) => w.focused)) { cameBack(); return; }
+  // No windows: Chrome is quitting, or they closed them all and onRemoved reopens the work. Just keep watching.
+  if (wins?.length) {
+    const first = awayTries++ === 0;
+    if (first) { s.left = (s.left || 0) + 1; await saveSession(); }
+    await focusBack(s, first);
+  }
+  if (away && !awayTimer && cached) awayTimer = setTimeout(pullBack, awayTries < AWAY_FAST_TRIES ? AWAY_FAST_MS : AWAY_SLOW_MS);
+}
+// Back to the window they left if it shows the work, class material or BOON (a file picker may be open there);
+// otherwise to the work tab, or the question.
+async function focusBack(s, first) {
   const last = s.quiz ? null : await chrome.windows.getLastFocused({ populate: true }).catch(() => null);
-  const tab = last?.tabs?.find((t) => t.active);
-  if (tab && (await allowedNow(s, tab))) await chrome.windows.update(last.id, { focused: true }).catch(() => {});
-  else await bringBack();
-  if (!awayTimer) awayTimer = setTimeout(pullBack, AWAY_RETRY_MS);
+  const t = last?.tabs?.find((x) => x.active);
+  let tab = t && (t.id === s.workTabId || s.okTabs?.[t.id] || matches(hostOf(t.url || t.pendingUrl || ""), BOON)) ? t : null;
+  const main = await getTab(s.quiz ? s.quiz.tabId : s.workTabId);
+  if (!tab) {
+    tab = main;
+    if (!tab) return;
+    if (!tab.active) await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+  }
+  if (first && main?.windowId === tab.windowId) await fullScreen(s, tab.windowId);
+  await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+}
+
+// ----- full screen -----
+// The work window goes full screen for the session, so on a Mac it has a desktop of its own and nothing else
+// sits beside it. If the student leaves full screen, it comes back the next time they're pulled back. Each
+// window goes back to how it was when focus ends.
+async function fullScreen(s, windowId) {
+  const w = await chrome.windows.get(windowId).catch(() => null);
+  if (!w || w.state === "fullscreen" || w.type !== "normal") return;
+  (s.full ||= {})[windowId] ??= w.state === "maximized" ? "maximized" : "normal";
+  await saveSession();
+  await chrome.windows.update(windowId, { state: "fullscreen" }).catch(() => {});
 }
 
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
@@ -607,12 +642,15 @@ chrome.runtime.onStartup.addListener(async () => {
   s.okTabs = {};
   s.boonTabId = null;
   s.quiz = null;
+  s.full = {};
   await saveSession();
   s.muted = [];
   s.minimized = [];
   await chrome.alarms.create("boon-focus-end", { when: s.end });
   await reopen();
   const now = await getSession();
+  const work = now && (await getTab(now.workTabId));
+  if (work) await fullScreen(now, work.windowId);
   if (now) await sweep(now);
 });
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BOON Focus",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Locks your tabs during a BOON focus session and shows a floating timer. Turning off early takes a hard algebra question.",
   "permissions": ["tabs", "webNavigation", "storage", "alarms", "scripting"],
   "host_permissions": ["<all_urls>"],
