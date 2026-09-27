@@ -301,6 +301,11 @@ details.think div { white-space: pre-wrap; border-left: 2px solid var(--edge); p
 .step.done::before { background: #4fd1a5; }
 .step.error::before { background: var(--danger); }
 .step.running::before { background: var(--blue); box-shadow: 0 0 10px rgba(91,140,245,.8); }
+.step.ask::before { background: #f5b942; box-shadow: 0 0 10px rgba(245,185,66,.8); }
+.step.denied::before { background: #f5b942; }
+.approve { margin-top: 8px; padding: 12px 14px; border: 1px solid #6b5a2e; border-radius: 14px; background: #221f18; }
+.approve-text { color: #ffe3a3; font-weight: 600; word-break: break-word; }
+.approve .alert-actions { margin-top: 10px; }
 .step .step-title { color: var(--ink); display: flex; align-items: center; gap: 8px; }
 .step code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: #1d2030; padding: 1px 6px; border-radius: 5px; word-break: break-word; }
 .step .step-result { margin-top: 3px; }
@@ -330,6 +335,15 @@ details.think div { white-space: pre-wrap; border-left: 2px solid var(--edge); p
 .reminder-text { font-weight: 600; word-break: break-word; }
 .reminder-when { font-size: 13px; color: var(--ink-dim); }
 .reminder-row .btn { height: 34px; padding: 0 12px; flex: none; }
+dialog h3 { margin: 16px 0 0; font-size: 15px; color: var(--ink-dim); }
+.todo-row { justify-content: flex-start; }
+.todo-row input { width: 18px; height: 18px; flex: none; accent-color: #4fd1a5; }
+.todo-row > div { flex: 1; min-width: 0; }
+.todo-row.done .reminder-text { text-decoration: line-through; color: var(--ink-faint); font-weight: 500; }
+.reminder-when.late { color: var(--danger); }
+.note-row > div { flex: 1; min-width: 0; }
+#notes .reminder-list { max-height: 32vh; margin: 8px 0; }
+.note-body { font-size: 13px; color: var(--ink-dim); white-space: pre-wrap; word-break: break-word; max-height: 4.2em; overflow: hidden; }
 dialog p.small { font-size: 12px; margin: 0; }
 dialog p.lock-note { font-size: 13px; margin: 12px 0 0; }
 .alert-card.important { border-color: #6a9bff; box-shadow: 0 14px 40px rgba(0,0,0,.5), 0 0 34px rgba(106,155,255,.55); }
@@ -418,6 +432,10 @@ dialog input:focus { border-color: #4a4f8a; }
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M5 3 2 6M19 3l3 3"/></svg>
       Reminders <span class="count" id="reminderCount" hidden></span>
     </button>
+    <button class="settings-btn" id="openNotes">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="m8 9 1.5 1.5L12 8M8 15l1.5 1.5L12 14M14.5 9.5H17M14.5 15.5H17"/></svg>
+      Notes &amp; to-dos <span class="count" id="todoCount" hidden></span>
+    </button>
     <button class="settings-btn" id="openSettings">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       Settings
@@ -498,6 +516,18 @@ dialog input:focus { border-color: #4a4f8a; }
     <p class="lock-note" id="lockNote"></p>
     <div class="reminder-list" id="reminderList"></div>
     <p class="small">Reminders ring while BOON is open in a browser tab (it can be in the background). Ones due while BOON was closed ring the next time you open it.</p>
+    <div class="dialog-actions"><button class="btn" value="close">Close</button></div>
+  </form>
+</dialog>
+
+<dialog id="notes">
+  <form method="dialog">
+    <h2>Notes &amp; to-dos</h2>
+    <h3>To-dos</h3>
+    <div class="reminder-list" id="todoList"></div>
+    <h3>Notes</h3>
+    <div class="reminder-list" id="noteList"></div>
+    <p class="small">Saved in this browser. Deleting a note or to-do from Agent mode always asks you first.</p>
     <div class="dialog-actions"><button class="btn" value="close">Close</button></div>
   </form>
 </dialog>
@@ -583,6 +613,7 @@ dialog input:focus { border-color: #4a4f8a; }
     focusNag: $("focusNag"), focusNagMsg: $("focusNagMsg"), focusNagClock: $("focusNagClock"), focusNagText: $("focusNagText"), focusNagBack: $("focusNagBack"), focusNagStay: $("focusNagStay"),
     quizLock: $("quizLock"), quizLockBack: $("quizLockBack"),
     schoolInput: $("schoolInput"), hagwonInput: $("hagwonInput"), lockNote: $("lockNote"),
+    notes: $("notes"), openNotes: $("openNotes"), todoCount: $("todoCount"), todoList: $("todoList"), noteList: $("noteList"),
   };
 
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -1338,6 +1369,10 @@ dialog input:focus { border-color: #4a4f8a; }
     "To remind the user, call set_reminder with the exact time including minutes (or in_minutes); list_reminders and cancel_reminder manage them. " +
     "Never say a reminder is set unless set_reminder succeeded. " +
     "For school work or anything important, pass important: true, a link if they named a site or doc, and focus_minutes (at least 10). " +
+    "Notes: save_note keeps something the user wants to remember, find_notes looks notes up, append_to_note adds to one. " +
+    "To-dos: add_todo (with a due date if they gave one), list_todos, complete_todo. " +
+    "Never say a note or to-do is saved or done unless the tool succeeded. " +
+    "delete_note, delete_todo and cancel_reminder ask the user to Allow or Deny first: just call the tool, and if they deny it, say it wasn't done. " +
     "When the task is done, give a short, clear final answer.";
 
   const MATH_NAMES = new Set(["sqrt", "cbrt", "abs", "round", "floor", "ceil", "sin", "cos", "tan", "asin", "acos", "atan",
@@ -1573,23 +1608,219 @@ dialog input:focus { border-color: #4a4f8a; }
       return list.length ? list.map((r) => `${r.id}: ${fmtWhen(r.at)}: ${r.text}`).join("\n") : "No upcoming reminders.";
     },
   };
+  const pickReminder = (list, a) => {
+    const q = String(a.text || "").toLowerCase().trim();
+    const hits = list.filter((r) => r.status === "pending" && (a.id ? r.id === a.id : q && r.text.toLowerCase().includes(q)));
+    if (!hits.length) throw new Error("no upcoming reminder matches that");
+    if (hits.length > 1 && !a.id) throw new Error(`${hits.length} reminders match; cancel one by id: ${hits.map((r) => r.id).join(", ")}`);
+    return hits[0];
+  };
   TOOLS.cancel_reminder = {
     label: "Cancel a reminder",
     spec: {
-      description: "Cancel an upcoming reminder by its id (from list_reminders) or by words from its text.",
+      description: "Cancel an upcoming reminder by its id (from list_reminders) or by words from its text. BOON asks the user to Allow or Deny first.",
       parameters: { type: "object", properties: { id: { type: "string" }, text: { type: "string" } } },
     },
     show: (a) => a.id || a.text || "",
+    ask: (a) => { const r = pickReminder(loadReminders(), a); return { q: `Cancel the reminder "${r.text}" for ${fmtWhen(r.at)}?`, id: r.id }; },
     run: (a) => {
       const list = loadReminders();
-      const q = String(a.text || "").toLowerCase().trim();
-      const hits = list.filter((r) => r.status === "pending" && (a.id ? r.id === a.id : q && r.text.toLowerCase().includes(q)));
-      if (!hits.length) throw new Error("no upcoming reminder matches that");
-      if (hits.length > 1 && !a.id) throw new Error(`${hits.length} reminders match; cancel one by id: ${hits.map((r) => r.id).join(", ")}`);
-      hits[0].status = "cancelled";
+      const r = pickReminder(list, a);
+      r.status = "cancelled";
       saveReminders(list);
       renderReminders();
-      return `Cancelled the reminder for ${fmtWhen(hits[0].at)}: "${hits[0].text}".`;
+      return `Cancelled the reminder for ${fmtWhen(r.at)}: "${r.text}".`;
+    },
+  };
+
+  // ---------- notes and to-dos ----------
+  // Saved in this browser and shown in the Notes & to-dos panel. Deleting one from Agent mode asks first:
+  // a tool's ask() names the exact item ({ q, id }), and Allow runs the tool on that id only.
+  const loadNotes = () => store.get("notes", []);
+  const saveNotes = (list) => { store.set("notes", list); renderNotes(); };
+  const loadTodos = () => store.get("todos", []);
+  const saveTodos = (list) => { store.set("todos", list); renderNotes(); };
+  const newId = (prefix, list) => { let id; do id = prefix + uid().slice(-5); while (list.some((x) => x.id === id)); return id; };
+  const clip = (t, n) => (t.length > n ? t.slice(0, n) + "…" : t);
+  const noteText = (n) => `${n.title}\n${n.text}`;
+  // One item by id, or by words from it (an exact match wins); several matches ask for the id.
+  function pick(list, a, what, textOf) {
+    const id = String(a.id || "").trim();
+    if (id) {
+      const hit = list.find((x) => x.id === id);
+      if (!hit) throw new Error(`no ${what} with id ${id}`);
+      return hit;
+    }
+    const q = String(a.text || "").toLowerCase().trim();
+    if (!q) throw new Error(`say which ${what}: its id or words from it`);
+    const hits = list.filter((x) => textOf(x).toLowerCase().includes(q));
+    const exact = hits.filter((x) => textOf(x).toLowerCase().trim() === q);
+    if (exact.length === 1) return exact[0];
+    if (!hits.length) throw new Error(`no ${what} matches "${a.text}"`);
+    if (hits.length > 1) throw new Error(`${hits.length} ${what}s match; pick one by id: ${hits.map((x) => `${x.id} (${clip(x.title || x.text, 30)})`).join(", ")}`);
+    return hits[0];
+  }
+
+  TOOLS.save_note = {
+    label: "Save a note",
+    spec: {
+      description: "Save a note for the user: something to remember, a list, an idea. Saved in this browser.",
+      parameters: { type: "object", properties: {
+        text: { type: "string", description: "The note itself" },
+        title: { type: "string", description: "Optional short title, e.g. 'Shopping list'" },
+      }, required: ["text"] },
+    },
+    show: (a) => a.title || clip(String(a.text || ""), 60),
+    run: (a) => {
+      const text = String(a.text || "").trim().slice(0, 5000);
+      if (!text) throw new Error("the note is empty");
+      const title = (String(a.title || "").trim() || text.split("\n")[0]).slice(0, 80);
+      const list = loadNotes();
+      const n = { id: newId("n", list), title, text, created: Date.now(), updated: Date.now() };
+      list.push(n);
+      saveNotes(list);
+      return `Saved note ${n.id}: "${title}".`;
+    },
+  };
+  TOOLS.find_notes = {
+    label: "Looked through notes",
+    spec: {
+      description: "Find the user's notes by words in them, or list all notes (newest first) when there's no query.",
+      parameters: { type: "object", properties: { query: { type: "string", description: "Optional words to look for" } } },
+    },
+    show: (a) => a.query || "",
+    run: (a) => {
+      const words = String(a.query || "").toLowerCase().split(/\s+/).filter(Boolean);
+      const list = loadNotes().filter((n) => words.every((w) => noteText(n).toLowerCase().includes(w))).sort((x, y) => y.updated - x.updated);
+      if (!list.length) return words.length ? "No notes match that." : "No notes yet.";
+      return list.slice(0, 15).map((n) => `${n.id}: ${n.title}\n${clip(n.text, 600)}`).join("\n\n") + (list.length > 15 ? `\n\n(${list.length - 15} more)` : "");
+    },
+  };
+  TOOLS.append_to_note = {
+    label: "Add to a note",
+    spec: {
+      description: "Add text to the end of an existing note, found by id (from find_notes) or by words from its title.",
+      parameters: { type: "object", properties: {
+        id: { type: "string" },
+        title: { type: "string", description: "Words from the note's title, if no id" },
+        text: { type: "string", description: "What to add" },
+      }, required: ["text"] },
+    },
+    show: (a) => `${a.id || a.title || ""} + ${clip(String(a.text || ""), 40)}`,
+    run: (a) => {
+      const add = String(a.text || "").trim();
+      if (!add) throw new Error("nothing to add");
+      const list = loadNotes();
+      const n = pick(list, { id: a.id, text: a.title }, "note", noteText);
+      n.text = (n.text + "\n" + add).slice(0, 10000);
+      n.updated = Date.now();
+      saveNotes(list);
+      return `Added to note ${n.id} "${n.title}".`;
+    },
+  };
+  TOOLS.delete_note = {
+    label: "Delete a note",
+    spec: {
+      description: "Delete one of the user's notes by id (from find_notes) or by words from it. BOON asks the user to Allow or Deny first.",
+      parameters: { type: "object", properties: { id: { type: "string" }, text: { type: "string", description: "Words from the note, if no id" } } },
+    },
+    show: (a) => a.id || a.text || "",
+    ask: (a) => { const n = pick(loadNotes(), a, "note", noteText); return { q: `Delete the note "${n.title}"?`, id: n.id }; },
+    run: (a) => {
+      const list = loadNotes();
+      const n = pick(list, a, "note", noteText);
+      saveNotes(list.filter((x) => x !== n));
+      return `Deleted the note "${n.title}".`;
+    },
+  };
+
+  // "2026-10-02", "today", "tomorrow" or a weekday ("friday" is the next Friday, or today if it's Friday).
+  const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  function dueDay(v) {
+    const t = String(v ?? "").trim().toLowerCase();
+    if (!t) return "";
+    const now = new Date();
+    const wd = WEEKDAYS.indexOf(t);
+    const d = t === "today" ? now
+      : t === "tomorrow" ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+      : wd >= 0 ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + ((wd - now.getDay() + 7) % 7))
+      : parseDay(t);
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  }
+  function dueText(ymd) {
+    if (!ymd) return "";
+    const d = parseDay(ymd), now = new Date();
+    const days = Math.round((d - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+    const day = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    return days === 0 ? "due today" : days === 1 ? "due tomorrow" : days < 0 ? `overdue (was due ${day})` : `due ${day}`;
+  }
+  const byDue = (x, y) => (x.due || "9999") < (y.due || "9999") ? -1 : (x.due || "9999") > (y.due || "9999") ? 1 : x.created - y.created;
+
+  TOOLS.add_todo = {
+    label: "Add a to-do",
+    spec: {
+      description: "Add an item to the user's to-do list, with a due date if they gave one.",
+      parameters: { type: "object", properties: {
+        text: { type: "string", description: "The task, e.g. 'finish the history essay'" },
+        due: { type: "string", description: "Optional due date: YYYY-MM-DD, 'today', 'tomorrow' or a weekday like 'friday'" },
+      }, required: ["text"] },
+    },
+    show: (a) => [a.text, a.due].filter(Boolean).join(" · "),
+    run: (a) => {
+      const text = String(a.text || "").trim().slice(0, 300);
+      if (!text) throw new Error("the to-do is empty");
+      const due = dueDay(a.due);
+      const list = loadTodos();
+      const t = { id: newId("t", list), text, due, done: false, created: Date.now() };
+      list.push(t);
+      saveTodos(list);
+      return `Added to-do ${t.id}: "${text}"${due ? `, ${dueText(due)}` : ""}.`;
+    },
+  };
+  TOOLS.list_todos = {
+    label: "Checked to-dos",
+    spec: {
+      description: "List the user's to-dos with their ids and due dates. Finished ones are left out unless include_done is true.",
+      parameters: { type: "object", properties: { include_done: { type: "boolean" } } },
+    },
+    show: () => "",
+    run: (a) => {
+      const all = loadTodos();
+      const open = all.filter((t) => !t.done).sort(byDue);
+      const done = a.include_done ? all.filter((t) => t.done) : [];
+      if (!open.length && !done.length) return all.length ? "Everything on the to-do list is done." : "The to-do list is empty.";
+      return [...open.map((t) => `${t.id}: ${t.text}${t.due ? ` (${dueText(t.due)})` : ""}`), ...done.map((t) => `${t.id}: ${t.text} (done)`)].join("\n");
+    },
+  };
+  TOOLS.complete_todo = {
+    label: "Check off a to-do",
+    spec: {
+      description: "Mark a to-do as done, by id (from list_todos) or by words from it.",
+      parameters: { type: "object", properties: { id: { type: "string" }, text: { type: "string", description: "Words from the to-do, if no id" } } },
+    },
+    show: (a) => a.id || a.text || "",
+    run: (a) => {
+      const list = loadTodos();
+      const t = pick(a.id ? list : list.filter((x) => !x.done), a, "to-do", (x) => x.text);
+      t.done = true;
+      t.doneAt = Date.now();
+      saveTodos(list);
+      return `Checked off "${t.text}".`;
+    },
+  };
+  TOOLS.delete_todo = {
+    label: "Delete a to-do",
+    spec: {
+      description: "Delete a to-do by id (from list_todos) or by words from it. To finish one, use complete_todo instead. BOON asks the user to Allow or Deny first.",
+      parameters: { type: "object", properties: { id: { type: "string" }, text: { type: "string", description: "Words from the to-do, if no id" } } },
+    },
+    show: (a) => a.id || a.text || "",
+    ask: (a) => { const t = pick(loadTodos(), a, "to-do", (x) => x.text); return { q: `Delete the to-do "${t.text}"?`, id: t.id }; },
+    run: (a) => {
+      const list = loadTodos();
+      const t = pick(list, a, "to-do", (x) => x.text);
+      saveTodos(list.filter((x) => x !== t));
+      return `Deleted the to-do "${t.text}".`;
     },
   };
 
@@ -2090,6 +2321,54 @@ dialog input:focus { border-color: #4a4f8a; }
     try { Promise.resolve(Notification.requestPermission()).then(renderReminders, () => {}); } catch {}
   }
 
+  // ----- notes & to-dos panel -----
+  function renderNotes() {
+    const todos = loadTodos();
+    const open = todos.filter((t) => !t.done).sort(byDue);
+    els.todoCount.textContent = open.length || "";
+    els.todoCount.hidden = !open.length;
+    if (!els.notes.open) return;
+    const done = todos.filter((t) => t.done).sort((x, y) => (y.doneAt || 0) - (x.doneAt || 0)).slice(0, 10);
+    const today = dueDay("today");
+    els.todoList.innerHTML = open.length || done.length ? "" : `<div class="list-empty">No to-dos yet. Turn on the robot and say "add finish my essay to my to-dos for Friday".</div>`;
+    for (const t of [...open, ...done]) {
+      const row = document.createElement("div");
+      row.className = "reminder-row todo-row" + (t.done ? " done" : "");
+      row.innerHTML = `<input type="checkbox"><div><div class="reminder-text"></div><div class="reminder-when"></div></div><button type="button" class="btn">Delete</button>`;
+      const box = row.querySelector("input");
+      box.checked = t.done;
+      box.setAttribute("aria-label", `Done: ${t.text}`);
+      row.querySelector(".reminder-text").textContent = t.text;
+      const when = row.querySelector(".reminder-when");
+      when.textContent = t.done ? "Done" : dueText(t.due);
+      when.hidden = !when.textContent;
+      when.classList.toggle("late", !t.done && !!t.due && t.due < today);
+      box.onchange = () => {
+        const all = loadTodos();
+        const it = all.find((x) => x.id === t.id);
+        if (!it) return renderNotes();
+        it.done = box.checked;
+        if (it.done) it.doneAt = Date.now(); else delete it.doneAt;
+        saveTodos(all);
+      };
+      row.querySelector("button").onclick = () => saveTodos(loadTodos().filter((x) => x.id !== t.id));
+      els.todoList.appendChild(row);
+    }
+    const notes = loadNotes().sort((x, y) => y.updated - x.updated);
+    els.noteList.innerHTML = notes.length ? "" : `<div class="list-empty">No notes yet. Turn on the robot and say "save a note: locker code 4 12 30".</div>`;
+    for (const n of notes) {
+      const row = document.createElement("div");
+      row.className = "reminder-row note-row";
+      row.innerHTML = `<div><div class="reminder-text"></div><div class="note-body"></div></div><button type="button" class="btn">Delete</button>`;
+      row.querySelector(".reminder-text").textContent = n.title;
+      row.querySelector(".note-body").textContent = clip((n.text.startsWith(n.title) ? n.text.slice(n.title.length) : n.text).trim(), 400);
+      row.querySelector("button").onclick = () => {
+        if (confirm(`Delete the note "${n.title}"?`)) saveNotes(loadNotes().filter((x) => x.id !== n.id));
+      };
+      els.noteList.appendChild(row);
+    }
+  }
+
   const TOOL_SPECS = Object.entries(TOOLS).map(([name, t]) => ({ type: "function", function: { name, ...t.spec } }));
 
   let agentMode = false;
@@ -2108,7 +2387,7 @@ dialog input:focus { border-color: #4a4f8a; }
   function renderAgentHint() {
     const m = agentModel();
     els.hint.innerHTML = m
-      ? `Agent mode: BOON uses tools (calculator, bill splitter, dates, reminders and focus timers) with ${escapeHtml(m.label)}${m.local ? " on this computer" : ""} and shows every step.`
+      ? `Agent mode: BOON uses tools (calculator, bill splitter, dates, reminders, notes, to-dos and focus timers) with ${escapeHtml(m.label)}${m.local ? " on this computer" : ""}, shows every step and asks before deleting anything.`
       : `Agent mode needs a model that can use tools. Run <code>ollama pull ${AGENT_DEFAULT}</code> on this computer, or add an OpenRouter key.`;
   }
 
@@ -2129,8 +2408,12 @@ dialog input:focus { border-color: #4a4f8a; }
       const tool = TOOLS[s.name];
       const shown = tool ? tool.show(s.args || {}) : JSON.stringify(s.args || {});
       const title = `${s.status === "running" ? '<span class="spinner"></span>' : ""}${escapeHtml(tool?.label || s.name)}${shown ? ` <code>${escapeHtml(String(shown))}</code>` : ""}`;
-      const result = s.status === "error" ? `Failed: ${s.result}` : s.result != null ? `→ ${s.result}` : "";
-      return `<li class="step ${s.status}"><div class="step-title">${title}</div>${result ? `<div class="step-result">${escapeHtml(result.length > 400 ? result.slice(0, 400) + "…" : result)}</div>` : ""}</li>`;
+      const result = s.status === "error" ? `Failed: ${s.result}` : s.status === "denied" ? s.result : s.result != null ? `→ ${s.result}` : "";
+      const card = s.status === "ask" && approvals.has(s.key)
+        ? `<div class="approve" data-key="${escapeHtml(s.key)}"><div class="approve-text">${escapeHtml(s.ask)}</div>` +
+          `<div class="alert-actions"><button type="button" class="chip-btn primary" data-approve="yes">Allow</button><button type="button" class="chip-btn" data-approve="no">Deny</button></div></div>`
+        : "";
+      return `<li class="step ${s.status}"><div class="step-title">${title}</div>${result ? `<div class="step-result">${escapeHtml(result.length > 400 ? result.slice(0, 400) + "…" : result)}</div>` : ""}${card}</li>`;
     }
     return "";
   }
@@ -2139,7 +2422,7 @@ dialog input:focus { border-color: #4a4f8a; }
     body.dataset.mid = m.id;
     let html = `<div class="agent-run"><div class="task-label">Agent</div><ol class="steps">`;
     for (const s of m.steps) html += stepHtml(s);
-    if (m.running) html += `<li class="step running"><div class="step-title"><span class="spinner"></span>${m.steps.length ? "Deciding the next step…" : "Planning…"}</div></li>`;
+    if (m.running && !m.steps.some((s) => s.status === "ask")) html += `<li class="step running"><div class="step-title"><span class="spinner"></span>${m.steps.length ? "Deciding the next step…" : "Planning…"}</div></li>`;
     html += `</ol>`;
     if (m.error) html += `<div class="error">${escapeHtml(m.error)}</div>`;
     if (m.content) html += `<div class="md">${renderMd(m.content)}</div>`;
@@ -2157,6 +2440,23 @@ dialog input:focus { border-color: #4a4f8a; }
     if (body) fillAgent(body, m);
     scrollDown();
   }
+
+  // Allow/Deny: a step whose tool has ask() waits here for the user's tap. Stop rejects it like any other step.
+  const approvals = new Map();
+  function approval(s) {
+    s.key = uid();
+    const signal = controller.signal;
+    return new Promise((resolve, reject) => {
+      const stop = () => { approvals.delete(s.key); reject(new DOMException("Stopped", "AbortError")); };
+      if (signal.aborted) return stop();
+      signal.addEventListener("abort", stop, { once: true });
+      approvals.set(s.key, (yes) => { signal.removeEventListener("abort", stop); approvals.delete(s.key); resolve(yes); });
+    });
+  }
+  els.thread.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-approve]");
+    if (b) approvals.get(b.closest("[data-key]")?.dataset.key)?.(b.dataset.approve === "yes");
+  });
 
   async function callModel(model, messages, key) {
     const local = isLocal(model);
@@ -2254,11 +2554,18 @@ dialog input:focus { border-color: #4a4f8a; }
           const wantsReminder = /\bremind me\b|\bset (a |an )?(reminder|alarm)\b|\bwake me\b/i.test(text) && !/\b(cancel|delete|remove|list|show|which|what|did|is my|are my)\b/i.test(text);
           const triedReminder = m.steps.some((s) => s.type === "tool" && /reminder/.test(s.name));
           const claimsReminder = /\b(i'?ll remind|i will remind|will remind you|reminder (is |has been )?(set|scheduled|created)|(set|scheduled) (a |your |the )?reminder)\b/i;
+          // Same for a note or to-do it says it saved without calling save_note or add_todo.
+          const wantsSave = /\b(note|jot|write (this|that|it) down|to-?dos?|task list)\b/i.test(text) && !/\b(delete|remove|list|show|find|read|which|what|did|check off|done with)\b/i.test(text);
+          const triedSave = m.steps.some((s) => s.type === "tool" && /note|todo/.test(s.name));
+          const claimsSaved = /\b((i'?ve|i have|i) (saved|added|noted|written|jotted)|(saved|added) (it |that |this )?(to|in|as) (a |your |the )?(notes?|to-?dos?|list)|(note|to-?do) (is |has been |was )?(saved|added|created))\b/i;
+          const refused = /can(no|[’']|)t|unable|couldn/i.test(content);
           const nudge = /\d\s*[÷\/×*+x-]\s*\d[\d,.]*\s*=\s*[$₩€£]?\s*\d/.test(content)
             ? "You wrote arithmetic in your answer. Work it out with the calculator tool instead, then give the final answer."
-            : wantsReminder && !triedReminder && !content.includes("?") && claimsReminder.test(content) && !/can(no|[’']|)t|unable|couldn/i.test(content)
+            : wantsReminder && !triedReminder && !content.includes("?") && claimsReminder.test(content) && !refused
               ? "You haven't set the reminder yet. Call set_reminder now with the exact time including minutes."
-              : "";
+              : wantsSave && !triedSave && !content.includes("?") && claimsSaved.test(content) && !refused
+                ? "You haven't saved it yet. Call save_note (for a note) or add_todo (for a to-do) now."
+                : "";
           if (nudge && !nudged) {
             nudged = true;
             messages.push({ role: "assistant", content }, { role: "user", content: nudge });
@@ -2275,13 +2582,31 @@ dialog input:focus { border-color: #4a4f8a; }
           const tool = TOOLS[s.name];
           try {
             if (!tool) throw new Error(`BOON has no tool called "${s.name}"`);
-            s.result = String(await tool.run(s.args));
-            s.status = "done";
+            let args = s.args;
+            if (tool.ask) {
+              // Ask about the exact item first (an unknown one fails here), then act only on that id.
+              const { q, id } = tool.ask(s.args);
+              s.ask = q;
+              s.status = "ask";
+              const wait = approval(s);
+              touch(m);
+              rerenderAgent(m);
+              if (await wait) { s.status = "running"; args = { ...s.args, id }; rerenderAgent(m); }
+              else { s.status = "denied"; s.result = "You said no, so BOON didn't do it."; }
+            }
+            if (s.status === "running") {
+              s.result = String(await tool.run(args));
+              s.status = "done";
+            }
           } catch (err) {
+            if (err.name === "AbortError") throw err;
             s.result = err.message || String(err);
             s.status = "error";
           }
-          messages.push({ role: "tool", tool_call_id: call.id, content: s.status === "error" ? "Error: " + s.result : s.result });
+          messages.push({ role: "tool", tool_call_id: call.id, content:
+            s.status === "error" ? "Error: " + s.result
+            : s.status === "denied" ? "The user pressed Deny, so this was NOT done. Tell them it wasn't done, and don't try it again."
+            : s.result });
         }
         touch(m);
         rerenderAgent(m);
@@ -2294,7 +2619,7 @@ dialog input:focus { border-color: #4a4f8a; }
         m.error = err.message || String(err);
       }
     } finally {
-      for (const s of m.steps) if (s.status === "running") { s.status = "error"; s.result = "stopped"; }
+      for (const s of m.steps) if (s.status === "running" || s.status === "ask") { s.status = "error"; s.result = "stopped"; }
       controller = null;
       setBusy(false);
       delete m.running;
@@ -2355,6 +2680,8 @@ dialog input:focus { border-color: #4a4f8a; }
   };
   els.openSettings.onclick = openSettings;
   els.openReminders.onclick = () => { els.reminders.showModal(); renderReminders(); };
+  els.openNotes.onclick = () => { els.notes.showModal(); renderNotes(); };
+  addEventListener("storage", (e) => { if (e.key === "boon.notes" || e.key === "boon.todos") renderNotes(); });
   els.notifyBtn.onclick = askNotifications;
   els.soundHint.onclick = () => { unlockAudio(); setTimeout(renderSoundHint, 50); };
   els.focusBack.onclick = backToWork;
@@ -2375,8 +2702,17 @@ dialog input:focus { border-color: #4a4f8a; }
   els.menuBtn.onclick = () => els.app.classList.toggle("nav-open");
   els.scroll.addEventListener("click", () => els.app.classList.remove("nav-open"));
 
+  // A task cut off by a reload or a closed tab shows as stopped instead of spinning forever.
+  for (const c of chats) for (const m of c.messages) if (m.kind === "agent" && m.running) {
+    delete m.running;
+    m.note = "stopped";
+    if (!m.content && !m.error) m.content = "_Stopped._";
+    for (const s of m.steps || []) if (s.status === "running" || s.status === "ask") { s.status = "error"; s.result = "stopped"; }
+  }
+
   renderGreeting();
   startReminderClock();
+  renderNotes();
   renderHint();
   renderModels();
   renderList();
