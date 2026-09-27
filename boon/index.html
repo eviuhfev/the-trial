@@ -1277,7 +1277,7 @@ dialog input:focus { border-color: #4a4f8a; }
     " You are in Agent mode: you complete tasks by calling tools, one step at a time. " +
     "Never do math or date math in your head: use the calculator for arithmetic, get_datetime for today's date or the time, " +
     "Put the whole calculation in one calculator expression, e.g. 64500*(1+0.18)/3; if a tool result needs more math, call the calculator again. " +
-    "A bill with a tip split N ways means (bill + tip) / N per person, unless the user says to split only the tip. " +
+    "For tips and splitting a bill, use split_bill: split N ways means everyone's share of the bill plus the tip. " +
     "Never write arithmetic out in your answer. " +
     "days_between to count days between dates, and add_days for questions like \"what date is 100 days from today\". " +
     "To remind the user, call set_reminder with the exact time including minutes (or in_minutes); list_reminders and cancel_reminder manage them. " +
@@ -1375,6 +1375,29 @@ dialog input:focus { border-color: #4a4f8a; }
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} (${d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })})`;
     },
   };
+  TOOLS.split_bill = {
+    label: "Split the bill",
+    spec: {
+      description: "Work out a bill with a tip (and/or tax) split between people. Use this for any tip or bill-splitting question.",
+      parameters: { type: "object", properties: {
+        bill: { type: "number", description: "The bill before the tip, e.g. 64500" },
+        tip_percent: { type: "number", description: "Tip in percent, e.g. 18. Use 0 for no tip." },
+        people: { type: "number", description: "How many people split it; 1 if nobody splits" },
+        tax_percent: { type: "number", description: "Optional tax in percent" },
+      }, required: ["bill", "people"] },
+    },
+    show: (a) => `${a.bill} + ${a.tip_percent || 0}% tip${a.tax_percent ? ` + ${a.tax_percent}% tax` : ""}, ${a.people || 1} ${Number(a.people) === 1 ? "person" : "people"}`,
+    run: (a) => {
+      const bill = Number(String(a.bill).replace(/[^\d.-]/g, "")), tipPct = Number(a.tip_percent || 0), taxPct = Number(a.tax_percent || 0);
+      const people = Math.round(Number(a.people || 1));
+      if (!(bill > 0) || !(people >= 1) || !Number.isFinite(tipPct + taxPct)) throw new Error("need a bill above 0 and at least 1 person");
+      const tip = bill * tipPct / 100, tax = bill * taxPct / 100, total = bill + tip + tax;
+      const n = (x) => (+x.toFixed(2)).toLocaleString("en-US");
+      return `Tip ${n(tip)}${tax ? `, tax ${n(tax)}` : ""}, total ${n(total)}. ` +
+        (people > 1 ? `Each of ${people} people pays ${n(total / people)} (${n(tip / people)} of that is tip).` : "");
+    },
+  };
+
   // ---------- reminders ----------
   // Saved in this browser. A worker ticks every second (background tabs throttle normal timers),
   // and a due reminder rings, pops a card in BOON and, if allowed, a system notification.
@@ -1435,6 +1458,22 @@ dialog input:focus { border-color: #4a4f8a; }
     return at;
   }
 
+  // "in 1 minute", "in an hour", "in half an hour": read straight from the user's words, since small
+  // models sometimes turn them into the wrong clock time.
+  let agentTask = "";
+  const WORD_NUM = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30, "forty-five": 45 };
+  function relativeMinutes(text) {
+    const t = String(text).toLowerCase();
+    if (/\d{1,2}:\d{2}|\d\s*(am|pm|a\.m|p\.m)\b|\b(noon|midnight|tomorrow|tonight|o'?clock)\b/.test(t)) return null;
+    const found = [...t.matchAll(/\bin\s+(half an hour|(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|forty-five)\s*(minutes?|mins?|m|hours?|hrs?|h|seconds?|secs?|s)\b)/g)];
+    if (found.length !== 1) return null;
+    const f = found[0];
+    if (f[1] === "half an hour") return 30;
+    const n = /\d/.test(f[2]) ? Number(f[2]) : WORD_NUM[f[2]];
+    const unit = f[3];
+    return /^h/.test(unit) ? n * 60 : /^s/.test(unit) ? n / 60 : n;
+  }
+
   TOOLS.set_reminder = {
     label: "Set a reminder",
     spec: {
@@ -1450,7 +1489,8 @@ dialog input:focus { border-color: #4a4f8a; }
     show: (a) => [a.in_minutes ? `in ${a.in_minutes} min` : [a.date, a.time].filter(Boolean).join(" "), a.text].filter(Boolean).join(" · "),
     run: (a) => {
       const text = String(a.text || "").trim() || "Reminder";
-      const at = reminderTime(a);
+      const rel = relativeMinutes(agentTask);
+      const at = reminderTime(rel ? { in_minutes: rel } : a);
       const list = loadReminders();
       const r = { id: "r" + uid().slice(-5), text, at, created: Date.now(), status: "pending" };
       list.push(r);
@@ -1649,7 +1689,7 @@ dialog input:focus { border-color: #4a4f8a; }
   function renderAgentHint() {
     const m = agentModel();
     els.hint.innerHTML = m
-      ? `Agent mode: BOON uses tools (calculator, dates, reminders) with ${escapeHtml(m.label)}${m.local ? " on this computer" : ""} and shows every step.`
+      ? `Agent mode: BOON uses tools (calculator, bill splitter, dates, reminders) with ${escapeHtml(m.label)}${m.local ? " on this computer" : ""} and shows every step.`
       : `Agent mode needs a model that can use tools. Run <code>ollama pull ${AGENT_DEFAULT}</code> on this computer, or add an OpenRouter key.`;
   }
 
@@ -1744,6 +1784,7 @@ dialog input:focus { border-color: #4a4f8a; }
   async function runAgent(text) {
     if (!text) return;
     if (/remind|alarm|timer|notify|alert me|wake me/i.test(text)) askNotifications();
+    agentTask = text;
     const model = agentModel();
     if (!model) { renderAgentHint(); els.hint.scrollIntoView?.(); return; }
     const key = store.get("key", "");

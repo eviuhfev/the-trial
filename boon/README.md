@@ -56,7 +56,13 @@ The free Spaces share GPU time, so they have a daily limit. Adding a free Huggin
 
 Tap the robot button next to the cube to switch the composer into Agent mode. Give BOON a task and it works
 through it with tools, showing every step as a timeline: what it thought, which tool it used, what came back,
-then the answer. Today's tools are a calculator, the date and time, counting days between dates, and adding days to a date; more come later.
+then the answer. Today's tools are a calculator, a bill splitter (tip, tax, people), the date and time, counting days
+between dates, adding days to a date, and reminders; more come later.
+
+**Reminders.** "Remind me at 8:52 am to study" or "remind me in 10 minutes to stretch" sets a reminder that rings at that
+exact minute: a chime, a pop-up with Snooze and Done, and a system notification if you allow them. The Reminders button
+in the sidebar lists and cancels them. They are saved in the browser and ring while BOON is open in a tab (it can be in
+the background); one that came due while BOON was closed rings the next time you open it.
 
 Agent mode needs a model that can call tools. Gemma 3 can't, so BOON uses Qwen3 on your computer:
 
