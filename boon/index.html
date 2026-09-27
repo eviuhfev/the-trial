@@ -2436,7 +2436,9 @@ dialog input:focus { border-color: #4a4f8a; }
 
   function renderAgentHint() {
     const m = agentModel();
-    els.hint.innerHTML = m
+    els.hint.innerHTML = m && warming
+      ? `⏳ Getting ${escapeHtml(m.label)} ready on this computer. It takes about 15 seconds after a plain chat or a break, then tasks are quick.`
+      : m
       ? `Agent mode: BOON uses tools (calculator, bill splitter, dates, reminders, notes, to-dos and focus timers) with ${escapeHtml(m.label)}${m.local ? " on this computer" : ""}, shows every step and asks before deleting anything.`
       : `Agent mode needs a model that can use tools. Run <code>ollama pull ${AGENT_DEFAULT}</code> on this computer, or add an OpenRouter key.`;
   }
@@ -2520,12 +2522,15 @@ dialog input:focus { border-color: #4a4f8a; }
   // A plain chat on this computer replaces what Ollama has cached (or unloads the agent model), so it resets this;
   // so does a failed request. Typing a task after a long pause warms up again, and turning the robot off cancels it.
   const WARM_MS = 4 * 60000;   // Ollama unloads a model 5 minutes after its last request
-  let agentWarm = { model: "", at: 0 }, warmCtl = null;
+  // The Mac can't hold the chat model and the agent model at once, so after a plain chat the agent model reloads (~15 s);
+  // the hint says so while a warm-up takes more than a moment.
+  let agentWarm = { model: "", at: 0 }, warmCtl = null, warming = false;
   function warmAgent() {
     const model = agentModel();
     if (!model?.local || controller || warmCtl || (agentWarm.model === model.id && Date.now() - agentWarm.at < WARM_MS)) return;
     const warm = agentWarm = { model: model.id, at: Date.now() };
     const ctl = warmCtl = new AbortController();
+    const slow = setTimeout(() => { warming = true; if (agentMode) renderHint(); }, 1500);
     fetch(OLLAMA + "/v1/chat/completions", {
       method: "POST",
       signal: ctl.signal,
@@ -2537,7 +2542,11 @@ dialog input:focus { border-color: #4a4f8a; }
     }).then(
       (r) => { if (!r.ok) warm.at = Date.now() - WARM_MS + 30000; },                               // try again in 30 s
       (e) => { warm.at = e.name === "AbortError" ? 0 : Date.now() - WARM_MS + 30000; },
-    ).finally(() => { if (warmCtl === ctl) warmCtl = null; });
+    ).finally(() => {
+      clearTimeout(slow);
+      if (warmCtl === ctl) warmCtl = null;
+      if (warming && !warmCtl) { warming = false; if (agentMode) renderHint(); }
+    });
   }
   // Cancels a warm-up still running; `replaced` also forgets a finished one (a plain chat took over Ollama).
   function stopWarm(replaced) {
