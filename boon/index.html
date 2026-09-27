@@ -1427,7 +1427,8 @@ dialog input:focus { border-color: #4a4f8a; }
     let at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, min).getTime();
     if (!date || /^today$/i.test(date)) {
       // No am/pm and already past: "4:30" at 3 PM means 4:30 PM. Otherwise the next day.
-      if (at <= now.getTime() && !ap && h < 12 && at + 12 * 3600000 > now.getTime()) at += 12 * 3600000;
+      // "08:52" and "00:30" are 24-hour times, so only a bare 1-11 gets the guess.
+      if (at <= now.getTime() && !ap && h >= 1 && h < 12 && !/^0/.test(m[1]) && at + 12 * 3600000 > now.getTime()) at += 12 * 3600000;
       else if (at <= now.getTime() && !date) at = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1, h, min).getTime();
     }
     if (at <= now.getTime()) throw new Error(`${fmtWhen(at)} has already passed`);
@@ -1479,7 +1480,7 @@ dialog input:focus { border-color: #4a4f8a; }
     run: (a) => {
       const list = loadReminders();
       const q = String(a.text || "").toLowerCase().trim();
-      const hits = list.filter((r) => r.status === "pending" && ((a.id && r.id === a.id) || (q && r.text.toLowerCase().includes(q))));
+      const hits = list.filter((r) => r.status === "pending" && (a.id ? r.id === a.id : q && r.text.toLowerCase().includes(q)));
       if (!hits.length) throw new Error("no upcoming reminder matches that");
       if (hits.length > 1 && !a.id) throw new Error(`${hits.length} reminders match; cancel one by id: ${hits.map((r) => r.id).join(", ")}`);
       hits[0].status = "cancelled";
@@ -1560,7 +1561,7 @@ dialog input:focus { border-color: #4a4f8a; }
     if (!due.length) return;
     for (const r of due) { r.status = "rang"; r.rangAt = now; }
     saveReminders(list);   // mark first so a second BOON tab doesn't ring the same one
-    due.forEach(ring);
+    due.forEach((r) => ring(r));
     renderReminders();
   }
 
@@ -1582,12 +1583,15 @@ dialog input:focus { border-color: #4a4f8a; }
       els.alerts.querySelectorAll("[data-rid]").forEach((card) => {
         if (list.find((r) => r.id === card.dataset.rid)?.status !== "rang") card.remove();
       });
+      // Rung by another tab: show it here too, with sound if this is the tab being looked at.
+      list.filter((r) => r.status === "rang").forEach((r) => ring(r, document.visibilityState !== "visible"));
       if (!els.alerts.children.length) document.title = baseTitle;
       renderReminders();
     });
     // Cards that rang but weren't answered (page reloaded or closed) come back until Done or Snooze.
     loadReminders().filter((r) => r.status === "rang").forEach((r) => ring(r, true));
     checkReminders();
+    renderReminders();
   }
 
   // ----- reminders panel -----
@@ -1786,10 +1790,13 @@ dialog input:focus { border-color: #4a4f8a; }
         if (!calls.length) {
           // Small models sometimes finish a sum in their head or claim a reminder they never set.
           // Push back once so the answer comes from a tool.
-          const used = new Set(m.steps.filter((s) => s.type === "tool" && s.status === "done").map((s) => s.name));
+          // Only a request to create a reminder, answered with a claim that one is set, with no reminder tool tried.
+          const wantsReminder = /\bremind me\b|\bset (a |an )?(reminder|alarm)\b|\bwake me\b/i.test(text) && !/\b(cancel|delete|remove|list|show|which|what|did|is my|are my)\b/i.test(text);
+          const triedReminder = m.steps.some((s) => s.type === "tool" && /reminder/.test(s.name));
+          const claimsReminder = /\b(i'?ll remind|i will remind|will remind you|reminder (is |has been )?(set|scheduled|created)|(set|scheduled) (a |your |the )?reminder)\b/i;
           const nudge = /\d\s*[÷\/×*+x-]\s*\d[\d,.]*\s*=\s*[$₩€£]?\s*\d/.test(content)
             ? "You wrote arithmetic in your answer. Work it out with the calculator tool instead, then give the final answer."
-            : /remind/i.test(text) && !used.has("set_reminder") && !used.has("list_reminders") && !used.has("cancel_reminder") && /remind/i.test(content) && !/can(no|')t/i.test(content)
+            : wantsReminder && !triedReminder && !content.includes("?") && claimsReminder.test(content) && !/can(no|[’']|)t|unable|couldn/i.test(content)
               ? "You haven't set the reminder yet. Call set_reminder now with the exact time including minutes."
               : "";
           if (nudge && !nudged) {
