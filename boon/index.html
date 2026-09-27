@@ -310,7 +310,7 @@ details.think div { white-space: pre-wrap; border-left: 2px solid var(--edge); p
 /* ---------- reminders ---------- */
 .settings-btn .count { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--blue); color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center; }
 .settings-btn .count[hidden] { display: none; }
-.alerts { position: fixed; top: 16px; right: 16px; z-index: 50; display: flex; flex-direction: column; gap: 10px; width: min(360px, calc(100vw - 32px)); }
+.alerts { position: fixed; top: 16px; right: 16px; z-index: 70; display: flex; flex-direction: column; gap: 10px; width: min(360px, calc(100vw - 32px)); }
 .alert-card {
   display: flex; gap: 12px; padding: 16px;
   border-radius: 18px; border: 1px solid #3a3f78;
@@ -323,7 +323,7 @@ details.think div { white-space: pre-wrap; border-left: 2px solid var(--edge); p
 .alert-title { font-size: 12px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .05em; }
 .alert-text { font-size: 17px; font-weight: 600; margin: 2px 0; word-wrap: break-word; }
 .alert-time { font-size: 13px; color: var(--ink-dim); }
-.alert-actions { display: flex; gap: 8px; margin-top: 12px; }
+.alert-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .alert-actions .chip-btn { height: 34px; padding: 0 14px; white-space: nowrap; }
 .reminder-list { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; max-height: 50vh; overflow-y: auto; }
 .reminder-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 12px; background: var(--field); }
@@ -1609,23 +1609,30 @@ dialog input:focus { border-color: #4a4f8a; }
   // focus timer of at least 10 minutes. A page can't see other tabs, so BOON watches what it can:
   // coming back to BOON early, or closing the work tab.
   const FOCUS_MIN = 10;
-  const SCHOOL_WORDS = /\b(home ?work|hw|stud(y|ying)|revis(e|ion|ing)|assignments?|essays?|exams?|tests?|quiz(zes)?|projects?|school|class(es|work)?|lectures?|lab reports?|readings?|worksheets?|math|maths|science|history|english|chemistry|physics|biology|korean|spanish|french|chinese|mandarin|economics|classroom)\b/i;
-  const IMPORTANT_WORDS = /\b(important|urgent|asap|deadline|due|critical|must do|don'?t forget)\b/i;
+  // School work means a task word (homework, essay, study for...) or a subject plus a task
+  // ("math test"), in the reminder's own words. Bare "test", "class" or "school" aren't enough:
+  // "test the oven" and "pick up my sister from school" stay plain reminders.
+  const SUBJECTS = "math|maths|calc|calculus|algebra|geometry|stats|statistics|chem|chemistry|bio|biology|physics|science|history|geography|english|lit|literature|spanish|french|korean|chinese|mandarin|japanese|latin|econ|economics|psych|psychology|cs|computer science|social studies|humanities|ap|ib|sat|act";
+  const SCHOOL_WORDS = new RegExp("\\b(home ?works?|hw|school ?work|class ?work|stud(y|ying|ies)|revis(e|ion|ing)|assignments?|essays?|exams?|midterms?|finals|quiz(zes)?|worksheets?|lab reports?|problem sets?|psets?|textbooks?|flash ?cards?|vocab(ulary)?|test prep|study guide|" +
+    `(${SUBJECTS}) (tests?|quiz(zes)?|exams?|home ?work|hw|projects?|essays?|reading|assignments?|labs?|notes|review|problems?)|` +
+    "(study|prep|prepare|revise|review) for|read(ing)? chapter|chapter \\d+)\\b", "i");
+  const NOT_FOCUS = /\b(break|rest|bed|bedtime|sleep|nap|stop (studying|working|doing)|done with|pick (up|me)|lunch|dinner|snack)\b/i;
+  const IMPORTANT_WORDS = /\b(important|urgent|asap|critical)\b/i;
   const SITES = [
-    [/google docs?|\bgdocs?\b/i, "https://docs.google.com/"],
-    [/google slides?/i, "https://docs.google.com/presentation/"],
-    [/google sheets?/i, "https://docs.google.com/spreadsheets/"],
-    [/google classroom|\bclassroom\b/i, "https://classroom.google.com/"],
-    [/khan ?academy/i, "https://www.khanacademy.org/"],
-    [/quizlet/i, "https://quizlet.com/"],
-    [/managebac/i, "https://www.managebac.com/"],
-    [/schoology/i, "https://www.schoology.com/"],
-    [/canvas/i, "https://canvas.instructure.com/"],
-    [/desmos/i, "https://www.desmos.com/calculator"],
+    [/google docs?|\bgdocs?\b/i, "https://docs.google.com/", "docs.google.com"],
+    [/google slides?/i, "https://docs.google.com/presentation/", "docs.google.com"],
+    [/google sheets?/i, "https://docs.google.com/spreadsheets/", "docs.google.com"],
+    [/google classroom|\bclassroom\b/i, "https://classroom.google.com/", "classroom.google.com"],
+    [/khan ?academy/i, "https://www.khanacademy.org/", "khanacademy.org"],
+    [/quizlet/i, "https://quizlet.com/", "quizlet.com"],
+    [/managebac/i, "https://www.managebac.com/", "managebac.com"],
+    [/schoology/i, "https://www.schoology.com/", "schoology.com"],
+    [/\bcanvas\b/i, "https://canvas.instructure.com/", "instructure.com"],
+    [/desmos/i, "https://www.desmos.com/calculator", "desmos.com"],
   ];
-  // Minutes by what the work is: the site opened, then the kind of task.
+  // Minutes by what the work is: the kind of task, then the site opened.
   const SITE_FOCUS = [[/docs\.google\.com\/?$|docs\.google\.com\/document/, 30], [/presentation|spreadsheets/, 25], [/classroom|managebac|schoology|canvas/, 25], [/khanacademy/, 20], [/quizlet/, 15], [/desmos/, 15]];
-  const TASK_FOCUS = [[/\b(exams?|test prep|essays?|projects?|revis(e|ion|ing)|lab reports?)\b/i, 30], [/\b(home ?work|hw|assignments?|stud(y|ying)|worksheets?|practice)\b/i, 25], [/\b(readings?|read)\b/i, 20], [/\b(quiz(zes)?|vocab|flash ?cards?)\b/i, 15]];
+  const TASK_FOCUS = [[/\b(exams?|midterms?|finals|tests?|test prep|essays?|projects?|revis(e|ion|ing)|lab reports?|study for)\b/i, 30], [/\b(home ?works?|hw|assignments?|stud(y|ying|ies)|worksheets?|problem sets?|psets?|practice)\b/i, 25], [/\b(readings?|read|chapter)\b/i, 20], [/\b(quiz(zes)?|vocab(ulary)?|flash ?cards?)\b/i, 15]];
 
   function cleanLink(v) {
     const s = String(v || "").trim();
@@ -1636,28 +1643,36 @@ dialog input:focus { border-color: #4a4f8a; }
   const siteName = (link) => { try { return new URL(link).hostname.replace(/^www\./, ""); } catch { return "your work"; } };
 
   function focusPlan(a, text, task) {
-    const words = `${text} ${task}`;
-    const school = SCHOOL_WORDS.test(words);
-    const important = a.important === true || a.important === "true" || school || IMPORTANT_WORDS.test(words);
-    if (!important) return null;
-    // Use the model's link only when the user named that site; otherwise pick from the user's words.
-    const said = String(task || text);
-    const named = said.match(/https?:\/\/\S+|\b[\w-]+(\.[\w-]+)*\.(com|org|net|edu|io|co|kr|app|me|ai)(\/\S*)?/i)?.[0];
-    let link = cleanLink(named);
+    const own = String(text || ""), said = String(task || "");
+    if (NOT_FOCUS.test(own)) return null;
+    const flagged = a.important === true || a.important === "true";
+    const school = SCHOOL_WORDS.test(own);
+    if (!school && !flagged && !IMPORTANT_WORDS.test(own) && !IMPORTANT_WORDS.test(said)) return null;
+    // A link the user typed wins (minus trailing punctuation). The model's link is kept whole only
+    // if the user typed it; if they only named the site, BOON opens that site's front page.
+    const typed = said.match(/https?:\/\/\S+|\b[\w-]+(\.[\w-]+)*\.(com|org|net|edu|io|co|kr|app|me|ai)(\/\S*)?/i)?.[0];
+    let link = cleanLink(typed?.replace(/[.,;:!?'"\])}>]+$/, ""));
     const modelLink = cleanLink(a.link);
     if (!link && modelLink) {
       const host = siteName(modelLink).split(".");
       const label = host.length > 2 && host[0] !== "www" ? host[0] : host[host.length - 2];
-      if (label && new RegExp(`\\b${label.replace(/[^\w-]/g, "")}\\b`, "i").test(said)) link = modelLink;
+      if (said.includes(modelLink.replace(/^https?:\/\//, "").replace(/\/$/, ""))) link = modelLink;
+      else if (label && new RegExp(`\\b${label.replace(/[^\w-]/g, "")}\\b`, "i").test(said)) link = new URL(modelLink).origin + "/";
     }
-    if (!link) link = SITES.find(([re]) => re.test(words))?.[1] || "";
-    if (!link && school) link = cleanLink(store.get("schoolLink", "")) || "https://classroom.google.com/";
+    const schoolLink = cleanLink(store.get("schoolLink", ""));
+    if (!link) {
+      const hit = SITES.find(([re]) => re.test(`${own} ${said}`));
+      // Their own school's ManageBac, Canvas or class page beats the site's public front page.
+      if (hit) link = schoolLink && (siteName(schoolLink) === hit[2] || siteName(schoolLink).endsWith("." + hit[2])) ? schoolLink : hit[1];
+    }
+    if (!link && school) link = schoolLink || "https://classroom.google.com/";
     let minutes = Number(a.focus_minutes);
     if (!Number.isFinite(minutes) || minutes <= 0) {
-      minutes = (link && SITE_FOCUS.find(([re]) => re.test(link))?.[1]) || TASK_FOCUS.find(([re]) => re.test(words))?.[1] || (school ? 15 : FOCUS_MIN);
+      minutes = TASK_FOCUS.find(([re]) => re.test(own))?.[1] || (link && SITE_FOCUS.find(([re]) => re.test(link))?.[1]) || (school ? 15 : FOCUS_MIN);
     }
     return { kind: school ? "school" : "important", link, focus: Math.min(180, Math.max(FOCUS_MIN, Math.round(minutes))) };
   }
+
 
   // The alarm: loud square-wave beeps on a loop until Done, Snooze or Start. Played from a looping
   // buffer on the audio clock, so a background tab keeps it steady.
@@ -1695,7 +1710,7 @@ dialog input:focus { border-color: #4a4f8a; }
   const syncAlarm = () => { if (!els.alerts.querySelector(".alert-card.ringing")) stopAlarm(); };
   const audioReady = () => !!audio && audio.state === "running";
 
-  let focusWin = null;
+  let focusWin = null, focusWinRid = null;   // the work tab this BOON tab opened (lost on reload)
   const loadFocus = () => store.get("focus", null);
   const clock = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${pad2(s % 60)}`; };
 
@@ -1709,6 +1724,7 @@ dialog input:focus { border-color: #4a4f8a; }
     if (loadFocus()) finishFocus(false);
     if (r.link) {
       focusWin = window.open(r.link, "boon-focus");
+      focusWinRid = r.id;
       try { focusWin?.focus(); } catch {}
     }
     const now = Date.now();
@@ -1720,8 +1736,14 @@ dialog input:focus { border-color: #4a4f8a; }
   function backToWork() {
     const f = loadFocus();
     if (!f?.link) return;
-    if (focusWin && !focusWin.closed) { try { focusWin.focus(); } catch {} }
-    else focusWin = window.open(f.link, "boon-focus");
+    if (!focusWin || focusWin.closed) {
+      // Find the work tab by name without reloading it; only a brand-new blank tab gets the link.
+      const w = window.open("", "boon-focus");
+      try { if (w && w.location.href === "about:blank") w.location.href = f.link; } catch { /* cross-origin: it's the open work tab */ }
+      focusWin = w;
+      focusWinRid = f.rid;
+    }
+    try { focusWin?.focus(); } catch {}
     els.focusNag.hidden = true;
   }
 
@@ -1729,7 +1751,7 @@ dialog input:focus { border-color: #4a4f8a; }
     const f = loadFocus();
     if (!f) return;
     store.set("focus", null);
-    focusWin = null;
+    focusWin = focusWinRid = null;
     setReminderStatus(f.rid, "done");
     renderFocus();
     renderReminders();
@@ -1773,27 +1795,30 @@ dialog input:focus { border-color: #4a4f8a; }
     if (!f) { if (!els.focusBar.hidden) renderFocus(); return; }
     if (Date.now() >= f.end) return finishFocus(true);
     renderFocus();
+    if (focusWin && focusWinRid !== f.rid) focusWin = null;   // another tab replaced the session
+    // Closed, or navigated somewhere that cuts BOON off from it (some sites do): either way BOON lost it.
     if (focusWin && focusWin.closed) {
       focusWin = null;
-      els.focusNagMsg.textContent = `You closed ${siteName(f.link)} with ${clock(f.end - Date.now())} to go.`;
-      els.focusNag.hidden = false;
+      els.focusNagMsg.textContent = `Your ${siteName(f.link)} tab was closed or moved to another site, with ${clock(f.end - Date.now())} to go.`;
+      if (!els.alerts.querySelector(".alert-card.ringing")) els.focusNag.hidden = false;
       chime();
-      notify("🎯 Back to " + f.text, `You closed your work tab with ${clock(f.end - Date.now())} to go.`, "focus-" + f.rid);
+      notify("🎯 Back to " + f.text, `${clock(f.end - Date.now())} to go.`, "focus-" + f.rid, false);
     }
   }
 
   // Coming back to BOON during focus shows the "stay on it" screen.
   function onFocusVisibility() {
     const f = loadFocus();
-    if (!f || document.visibilityState !== "visible" || !f.link) return;
+    // A ringing reminder comes first: leave its card reachable.
+    if (!f || document.visibilityState !== "visible" || !f.link || els.alerts.querySelector(".alert-card.ringing")) return;
     els.focusNagMsg.textContent = "You're back in BOON early. BOON can't see your other tabs, but it notices when you come back here.";
     els.focusNag.hidden = false;
     renderFocus();
   }
 
-  function notify(title, body, tag) {
+  function notify(title, body, tag, sticky = true) {
     if (!("Notification" in window) || Notification.permission !== "granted") return;
-    try { const n = new Notification(title, { body, tag, requireInteraction: true }); n.onclick = () => { window.focus(); n.close(); }; } catch {}
+    try { const n = new Notification(title, { body, tag, requireInteraction: sticky }); n.onclick = () => { window.focus(); n.close(); }; } catch {}
   }
 
   const baseTitle = document.title;
@@ -1809,7 +1834,7 @@ dialog input:focus { border-color: #4a4f8a; }
       ? `<div class="alert-icon" aria-hidden="true">${r.kind === "school" ? "📚" : "🎯"}</div>
       <div class="alert-main"><div class="alert-title">${r.kind === "school" ? "School work" : "Important"}</div><div class="alert-text"></div>
       <div class="alert-time"></div><div class="alert-plan"></div>
-      <div class="alert-actions"><button type="button" class="chip-btn" data-act="snooze">Snooze 5 min</button><button type="button" class="chip-btn primary" data-act="focus"></button></div></div>`
+      <div class="alert-actions"><button type="button" class="chip-btn" data-act="snooze">Snooze 5 min</button><button type="button" class="chip-btn" data-act="done">Done</button><button type="button" class="chip-btn primary" data-act="focus"></button></div></div>`
       : `<div class="alert-icon" aria-hidden="true">⏰</div>
       <div class="alert-main"><div class="alert-title">Reminder</div><div class="alert-text"></div>
       <div class="alert-time"></div>
@@ -1870,7 +1895,11 @@ dialog input:focus { border-color: #4a4f8a; }
     setInterval(tick, ticking ? 15000 : 1000);
     document.addEventListener("visibilitychange", tick);
     document.addEventListener("visibilitychange", onFocusVisibility);
-    addEventListener("storage", (e) => { if (e.key === "boon.focus") renderFocus(); });
+    addEventListener("storage", (e) => {
+      if (e.key !== "boon.focus") return;
+      if (loadFocus()?.rid !== focusWinRid) focusWin = focusWinRid = null;
+      renderFocus();
+    });
     // Another BOON tab snoozed or finished one: drop its card here too.
     addEventListener("storage", (e) => {
       if (e.key !== "boon.reminders") return;
