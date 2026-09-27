@@ -862,6 +862,7 @@ dialog input:focus { border-color: #4a4f8a; }
   function setBusy(busy) {
     els.sendBtn.disabled = busy;
     els.stopBtn.disabled = !busy;
+    if (!busy && agentMode) setTimeout(warmAgent);   // the robot was turned on while a reply was coming
   }
 
   function buildUserMessage(text) {
@@ -887,6 +888,7 @@ dialog input:focus { border-color: #4a4f8a; }
     const key = store.get("key", "");
     if (!text && !pending.length) return;
     if (!key && !isLocal(els.modelSelect.value)) { openSettings(); return; }
+    if (isLocal(els.modelSelect.value)) stopWarm(true);   // this chat takes over Ollama, so the robot warms up again next time
 
     let chat = current();
     if (!chat) {
@@ -1302,6 +1304,10 @@ dialog input:focus { border-color: #4a4f8a; }
     // Gradio rejects with plain status objects ({stage: "error", message}) as well as Errors.
     const msg = err?.message || (err && typeof err === "object" ? JSON.stringify(err).slice(0, 200) : String(err || ""));
     if (/quota|exceeded|limit/i.test(msg)) {
+      if (store.get("hf", "")) {
+        const wait = msg.match(/try again in ([\d:]+)/i)?.[1];
+        return `Your free Hugging Face account's GPU time is used up for now. It refills over time, so try again ${wait ? `in ${wait}` : "later"}.`;
+      }
       return "QUOTA:The free AI servers only give each visitor a little GPU time, and it's used up. Add a free Hugging Face token in Settings to keep going.";
     }
     if (/failed to fetch|networkerror|load failed/i.test(msg)) return `${lead}. Check your internet connection and try again. (${msg})`;
@@ -1714,7 +1720,9 @@ dialog input:focus { border-color: #4a4f8a; }
     run: (a) => {
       const all = loadNotes().sort((x, y) => y.updated - x.updated);
       if (!all.length) return "No notes yet.";
-      const show = (list) => list.slice(0, 15).map((n) => `${n.id}: ${n.title}\n${clip(n.text, 600)}`).join("\n\n") + (list.length > 15 ? `\n\n(${list.length - 15} more)` : "");
+      // Matches come back in full (up to 5); a list of every note is short snippets, so it fits in a small model's memory.
+      const show = (list, full) => list.slice(0, full ? 5 : 15).map((n) => `${n.id}: ${n.title}\n${full ? clip(n.text, 600) : clip(n.text.replace(/\s+/g, " "), 120)}`).join("\n\n") +
+        (list.length > (full ? 5 : 15) ? `\n\n(${list.length - (full ? 5 : 15)} more; search with other words to see them)` : "");
       // Any key word counts (a question like "what's my locker code" still finds "Locker: 4 12 30"); best matches first.
       const words = noteWords(a.query);
       if (!words.length) return show(all);
@@ -1722,7 +1730,7 @@ dialog input:focus { border-color: #4a4f8a; }
         const have = noteWords(noteText(n));
         return { n, score: words.filter((w) => have.some((x) => x.startsWith(w) || w.startsWith(x))).length };
       }).filter((h) => h.score).sort((x, y) => y.score - x.score).map((h) => h.n);
-      return hits.length ? show(hits) : `No note matched "${a.query}", so here are all ${all.length} notes:\n\n${show(all)}`;
+      return hits.length ? show(hits, true) : `No note matched "${a.query}", so here are all ${all.length} notes:\n\n${show(all)}`;
     },
   };
   TOOLS.append_to_note = {
@@ -2440,7 +2448,7 @@ dialog input:focus { border-color: #4a4f8a; }
     els.input.placeholder = on ? "Give BOON a task" : "Ask BOON";
     renderHint();
     els.input.focus();
-    if (on) warmAgent();
+    if (on) warmAgent(); else stopWarm(false);
   }
 
   function stepHtml(s) {
@@ -2509,25 +2517,38 @@ dialog input:focus { border-color: #4a4f8a; }
 
   // Turning the robot on has Ollama read the system prompt and tool list right away (a one-token reply),
   // while the user types, so the first task doesn't wait for it. Ollama keeps a model loaded for 5 minutes.
-  let agentWarm = { model: "", at: 0 };
+  // A plain chat on this computer replaces what Ollama has cached (or unloads the agent model), so it resets this;
+  // so does a failed request. Typing a task after a long pause warms up again, and turning the robot off cancels it.
+  const WARM_MS = 4 * 60000;   // Ollama unloads a model 5 minutes after its last request
+  let agentWarm = { model: "", at: 0 }, warmCtl = null;
   function warmAgent() {
     const model = agentModel();
-    if (!model?.local || controller || (agentWarm.model === model.id && Date.now() - agentWarm.at < 4 * 60000)) return;
+    if (!model?.local || controller || warmCtl || (agentWarm.model === model.id && Date.now() - agentWarm.at < WARM_MS)) return;
     const warm = agentWarm = { model: model.id, at: Date.now() };
+    const ctl = warmCtl = new AbortController();
     fetch(OLLAMA + "/v1/chat/completions", {
       method: "POST",
+      signal: ctl.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: model.id.slice(LOCAL.length), messages: [{ role: "system", content: agentPrompt() }, { role: "user", content: "hi" }],
         tools: TOOL_SPECS, stream: false, max_tokens: 1, reasoning_effort: "none",
       }),
-    }).catch(() => { warm.at = 0; });
+    }).then(
+      (r) => { if (!r.ok) warm.at = Date.now() - WARM_MS + 30000; },                               // try again in 30 s
+      (e) => { warm.at = e.name === "AbortError" ? 0 : Date.now() - WARM_MS + 30000; },
+    ).finally(() => { if (warmCtl === ctl) warmCtl = null; });
+  }
+  // Cancels a warm-up still running; `replaced` also forgets a finished one (a plain chat took over Ollama).
+  function stopWarm(replaced) {
+    if (warmCtl) { warmCtl.abort(); warmCtl = null; }
+    if (replaced) agentWarm = { model: "", at: 0 };
   }
   els.modelSelect.addEventListener("change", () => { if (agentMode) warmAgent(); });
+  els.input.addEventListener("input", () => { if (agentMode) warmAgent(); });
 
   async function callModel(model, messages, key) {
     const local = isLocal(model);
-    if (local) agentWarm = { model, at: Date.now() };
     let res;
     try {
       res = await fetch(local ? OLLAMA + "/v1/chat/completions" : API + "/chat/completions", {
@@ -2558,9 +2579,25 @@ dialog input:focus { border-color: #4a4f8a; }
     }
     const j = await res.json();
     if (j.error) throw new Error(j.error.message || "The model returned an error.");
+    if (local) agentWarm = { model, at: Date.now() };
     const msg = j.choices?.[0]?.message;
     if (!msg) throw new Error("The model sent back an empty reply.");
     return msg;
+  }
+
+  // Budgets for a local model's 4,096-token window (about 4 characters a token).
+  const TOOL_RESULT_MAX = 2000, PAST_MAX = 3000, PAST_TURNS = 6, PAST_EACH = 800;
+  function recentTurns(past) {
+    const out = [];
+    let used = 0;
+    for (let i = past.length - 1; i >= 0 && out.length < PAST_TURNS; i--) {
+      const text = clip(textOf(past[i].content), PAST_EACH);   // pictures in older turns are left out
+      if (!text) continue;
+      if (used + text.length > PAST_MAX) break;
+      used += text.length;
+      out.unshift({ role: past[i].role, content: text });
+    }
+    return out;
   }
 
   function parseArgs(raw) {
@@ -2583,9 +2620,12 @@ dialog input:focus { border-color: #4a4f8a; }
       currentId = chat.id;
     }
     // Earlier turns give the agent context; agent turns count as plain user/assistant text.
-    const past = chat.messages
+    let past = chat.messages
       .filter((x) => !x.error && (!x.kind || x.kind === "agent-task" || (x.kind === "agent" && x.content)))
       .map(({ role, content }) => ({ role, content }));
+    // On this computer, only the recent turns: the instructions and tools already fill ~2,200 of Ollama's 4,096 tokens,
+    // and running past that makes Ollama drop its cached copy of them (slow again) or the task itself.
+    if (model.local) past = recentTurns(past);
     chat.messages.push({ role: "user", kind: "agent-task", content: text, display: text, images: [], files: [] });
     const m = { role: "assistant", kind: "agent", id: uid(), content: "", steps: [], model: model.id, running: true };
     chat.messages.push(m);
@@ -2620,12 +2660,12 @@ dialog input:focus { border-color: #4a4f8a; }
           // Push back once so the answer comes from a tool.
           // Only a request to create a reminder, answered with a claim that one is set, with no reminder tool tried.
           const wantsReminder = /\bremind me\b|\bset (a |an )?(reminder|alarm)\b|\bwake me\b/i.test(text) && !/\b(cancel|delete|remove|list|show|which|what|did|is my|are my)\b/i.test(text);
-          const triedReminder = m.steps.some((s) => s.type === "tool" && /reminder/.test(s.name));
+          const triedReminder = m.steps.some((s) => s.type === "tool" && s.name === "set_reminder");
           const claimsReminder = /\b(i'?ll remind|i will remind|will remind you|reminder (is |has been )?(set|scheduled|created)|(set|scheduled) (a |your |the )?reminder)\b/i;
           // Same for a note or to-do it says it saved without calling save_note or add_todo.
           const wantsSave = /\b(save|add|put|keep|store)\b[^.!?]{0,80}\b(notes?|to[- ]?dos?|task list)\b|\bjot\b|\bwrite (this|that|it) down\b|\b(take|make) a note\b|\bnote (this|that|it) down\b/i.test(text)
             && !/\b(delete|remove|show|find|read|which|what|did|check off|done with)\b|\blist (me |all )?(my|the|of)\b|^\s*list\b/i.test(text);
-          const triedSave = m.steps.some((s) => s.type === "tool" && /note|todo/.test(s.name));
+          const triedSave = m.steps.some((s) => s.type === "tool" && /^(save_note|append_to_note|add_todo)$/.test(s.name));
           const claimsSaved = /^\s*(saved|added|noted|done)\b|\b((i'?ve|i have|i) (saved|added|noted|jotted)|(saved|added) (it |that |this )?(to|in|as) (a |your |the )?(notes?|to[- ]?dos?|list)|(note|to-?do) (is |has been |was )?(saved|added|created))\b/i;
           const refused = /can(no|[’']|)t|unable|couldn/i.test(content);
           // And a question about something the user may have saved ("what's my locker code?") answered without looking.
@@ -2680,7 +2720,7 @@ dialog input:focus { border-color: #4a4f8a; }
           messages.push({ role: "tool", tool_call_id: call.id, content:
             s.status === "error" ? "Error: " + s.result
             : s.status === "denied" ? "The user pressed Deny, so this was NOT done. Tell them it wasn't done, and don't try it again."
-            : s.result });
+            : model.local ? clip(s.result, TOOL_RESULT_MAX) : s.result });
         }
         touch(m);
         rerenderAgent(m);
