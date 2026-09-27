@@ -324,13 +324,35 @@ details.think div { white-space: pre-wrap; border-left: 2px solid var(--edge); p
 .alert-text { font-size: 17px; font-weight: 600; margin: 2px 0; word-wrap: break-word; }
 .alert-time { font-size: 13px; color: var(--ink-dim); }
 .alert-actions { display: flex; gap: 8px; margin-top: 12px; }
-.alert-actions .chip-btn { height: 34px; padding: 0 14px; }
+.alert-actions .chip-btn { height: 34px; padding: 0 14px; white-space: nowrap; }
 .reminder-list { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; max-height: 50vh; overflow-y: auto; }
 .reminder-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 12px; background: var(--field); }
 .reminder-text { font-weight: 600; word-break: break-word; }
 .reminder-when { font-size: 13px; color: var(--ink-dim); }
 .reminder-row .btn { height: 34px; padding: 0 12px; flex: none; }
 dialog p.small { font-size: 12px; margin: 0; }
+.alert-card.important { border-color: #6a9bff; box-shadow: 0 14px 40px rgba(0,0,0,.5), 0 0 34px rgba(106,155,255,.55); }
+.alert-card.ringing .alert-icon { animation: shake .5s ease-in-out infinite; }
+@keyframes shake { 25% { transform: rotate(-14deg); } 75% { transform: rotate(14deg); } }
+.alert-plan { font-size: 13px; color: #b9c8ff; margin-top: 6px; }
+.sound-hint { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 49; border: 1px solid #5a4a2a; background: #2a2416; color: #ffd98a; border-radius: 16px; padding: 8px 14px; font-size: 13px; max-width: calc(100vw - 32px); }
+.sound-hint[hidden], .focus-bar[hidden], .focus-nag[hidden] { display: none; }
+.focus-bar {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 45;
+  display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px);
+  padding: 8px 8px 8px 16px; border-radius: 24px; border: 1px solid #3a3f78;
+  background: rgba(24,26,44,.97); box-shadow: 0 10px 30px rgba(0,0,0,.45);
+}
+.focus-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34vw; }
+.focus-clock { font-variant-numeric: tabular-nums; font-weight: 700; color: #8fb0ff; }
+.focus-bar .chip-btn { height: 34px; padding: 0 14px; flex: none; }
+.focus-nag { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; background: rgba(5,6,12,.78); backdrop-filter: blur(4px); }
+.focus-nag-card { width: min(440px, 100%); text-align: center; padding: 28px 24px; border-radius: 24px; border: 1px solid #3a3f78; background: #151724; }
+.focus-nag-clock { font-size: 56px; font-weight: 700; font-variant-numeric: tabular-nums; color: #8fb0ff; line-height: 1.1; }
+.focus-nag-title { font-size: 18px; font-weight: 600; margin: 8px 0; word-wrap: break-word; }
+.focus-nag-card p { color: var(--ink-dim); font-size: 14px; margin: 0 0 16px; }
+.focus-nag-card .alert-actions { justify-content: center; }
+@media (prefers-reduced-motion: reduce) { .alert-card.ringing .alert-icon { animation: none; } }
 @media (prefers-reduced-motion: reduce) { .alert-card { animation: none; } }
 
 /* ---------- settings dialog ---------- */
@@ -443,6 +465,20 @@ dialog input:focus { border-color: #4a4f8a; }
 </div>
 
 <div class="alerts" id="alerts" aria-live="assertive"></div>
+<button type="button" class="sound-hint" id="soundHint" hidden>🔇 Click anywhere in BOON once so reminders can ring out loud</button>
+<div class="focus-bar" id="focusBar" hidden>
+  <span aria-hidden="true">🎯</span><span class="focus-text" id="focusText"></span><span class="focus-clock" id="focusClock"></span>
+  <button type="button" class="chip-btn primary" id="focusBack">Back to work</button>
+  <button type="button" class="chip-btn" id="focusEnd" hidden>Finish</button>
+</div>
+<div class="focus-nag" id="focusNag" hidden role="alertdialog" aria-labelledby="focusNagText">
+  <div class="focus-nag-card">
+    <div class="focus-nag-clock" id="focusNagClock"></div>
+    <div class="focus-nag-title">Stay on it: <span id="focusNagText"></span></div>
+    <p id="focusNagMsg"></p>
+    <div class="alert-actions"><button type="button" class="chip-btn" id="focusNagStay">Keep BOON open</button><button type="button" class="chip-btn primary" id="focusNagBack">Back to work</button></div>
+  </div>
+</div>
 
 <dialog id="reminders">
   <form method="dialog">
@@ -467,6 +503,8 @@ dialog input:focus { border-color: #4a4f8a; }
     <input id="hfInput" type="password" autocomplete="off" placeholder="hf_..." />
     <label for="pollenInput">Pollinations key (optional backup for images)</label>
     <input id="pollenInput" type="password" autocomplete="off" placeholder="From enter.pollinations.ai" />
+    <label for="schoolInput">School work link (opens when a school reminder rings)</label>
+    <input id="schoolInput" type="url" autocomplete="off" placeholder="https://classroom.google.com" />
     <div class="dialog-actions">
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
       <button class="btn primary" value="save" id="saveSettings">Save</button>
@@ -527,7 +565,10 @@ dialog input:focus { border-color: #4a4f8a; }
     settings: $("settings"), keyInput: $("keyInput"), nameInput: $("nameInput"), hfInput: $("hfInput"), pollenInput: $("pollenInput"),
     openSettings: $("openSettings"), menuBtn: $("menuBtn"),
     alerts: $("alerts"), reminders: $("reminders"), openReminders: $("openReminders"), reminderCount: $("reminderCount"),
-    reminderList: $("reminderList"), notifyBtn: $("notifyBtn"), notifyNote: $("notifyNote"),
+    reminderList: $("reminderList"), notifyBtn: $("notifyBtn"), notifyNote: $("notifyNote"), soundHint: $("soundHint"),
+    focusBar: $("focusBar"), focusText: $("focusText"), focusClock: $("focusClock"), focusBack: $("focusBack"), focusEnd: $("focusEnd"),
+    focusNag: $("focusNag"), focusNagMsg: $("focusNagMsg"), focusNagClock: $("focusNagClock"), focusNagText: $("focusNagText"), focusNagBack: $("focusNagBack"), focusNagStay: $("focusNagStay"),
+    schoolInput: $("schoolInput"),
   };
 
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -1282,6 +1323,7 @@ dialog input:focus { border-color: #4a4f8a; }
     "days_between to count days between dates, and add_days for questions like \"what date is 100 days from today\". " +
     "To remind the user, call set_reminder with the exact time including minutes (or in_minutes); list_reminders and cancel_reminder manage them. " +
     "Never say a reminder is set unless set_reminder succeeded. " +
+    "For school work or anything important, pass important: true, a link if they named a site or doc, and focus_minutes (at least 10). " +
     "When the task is done, give a short, clear final answer.";
 
   const MATH_NAMES = new Set(["sqrt", "cbrt", "abs", "round", "floor", "ceil", "sin", "cos", "tan", "asin", "acos", "atan",
@@ -1484,21 +1526,28 @@ dialog input:focus { border-color: #4a4f8a; }
         time: { type: "string", description: "Clock time with minutes, e.g. '8:52 am' or '20:30'" },
         date: { type: "string", description: "Optional YYYY-MM-DD or 'tomorrow'; defaults to the next time that clock time comes around" },
         in_minutes: { type: "number", description: "Instead of time: minutes from now, e.g. 10" },
+        important: { type: "boolean", description: "true for school work (homework, study, tests, essays) or anything the user calls important" },
+        link: { type: "string", description: "For important reminders: the site or doc to open, if the user named one, e.g. docs.google.com" },
+        focus_minutes: { type: "number", description: "For important reminders: minutes to focus, at least 10 (e.g. 25 homework, 30 essay or test prep)" },
       }, required: ["text"] },
     },
-    show: (a) => [a.in_minutes ? `in ${a.in_minutes} min` : [a.date, a.time].filter(Boolean).join(" "), a.text].filter(Boolean).join(" · "),
+    show: (a) => [a.in_minutes ? `in ${a.in_minutes} min` : [a.date, a.time].filter(Boolean).join(" "), a.text, a.important ? "important" : ""].filter(Boolean).join(" · "),
     run: (a) => {
       const text = String(a.text || "").trim() || "Reminder";
       const rel = relativeMinutes(agentTask);
       const at = reminderTime(rel ? { in_minutes: rel } : a);
       const list = loadReminders();
-      const r = { id: "r" + uid().slice(-5), text, at, created: Date.now(), status: "pending" };
+      const plan = focusPlan(a, text, agentTask);
+      const r = { id: "r" + uid().slice(-5), text, at, created: Date.now(), status: "pending", ...(plan || {}) };
       list.push(r);
       saveReminders(list);
       renderReminders();
       const ask = "Notification" in window && Notification.permission !== "granted"
         ? " It will ring and pop up inside BOON; BOON must stay open in a browser tab." : " BOON must stay open in a browser tab.";
-      return `Reminder set for ${fmtWhen(at)} (${untilText(at)}): "${text}".${ask}`;
+      const focusNote = plan
+        ? ` It's ${plan.kind === "school" ? "school work" : "important"}: when it rings, BOON ${plan.link ? `opens ${siteName(plan.link)} and ` : ""}starts a ${plan.focus}-minute focus timer.`
+        : "";
+      return `Reminder set for ${fmtWhen(at)} (${untilText(at)}): "${text}".${focusNote}${ask}`;
     },
   };
   TOOLS.list_reminders = {
@@ -1535,6 +1584,7 @@ dialog input:focus { border-color: #4a4f8a; }
   const unlockAudio = () => {
     try { audio ||= new (window.AudioContext || window.webkitAudioContext)(); if (audio.state === "suspended") audio.resume(); } catch {}
   };
+  addEventListener("pointerdown", () => setTimeout(renderSoundHint, 50), { capture: true });
   addEventListener("pointerdown", unlockAudio, { capture: true });
   addEventListener("keydown", unlockAudio, { capture: true });
   function chime() {
@@ -1546,7 +1596,7 @@ dialog input:focus { border-color: #4a4f8a; }
         const o = audio.createOscillator(), g = audio.createGain();
         o.type = "sine"; o.frequency.value = i % 3 === 2 ? 1320 : 988;
         g.gain.setValueAtTime(0.0001, t0 + dt);
-        g.gain.exponentialRampToValueAtTime(0.25, t0 + dt + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.6, t0 + dt + 0.02);
         g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.24);
         o.connect(g).connect(audio.destination);
         o.start(t0 + dt); o.stop(t0 + dt + 0.26);
@@ -1554,20 +1604,215 @@ dialog input:focus { border-color: #4a4f8a; }
     } catch {}
   }
 
+  // ----- focus reminders: school work or important -----
+  // When one rings, "Start" opens the work tab (a click, so pop-up blockers allow it) and runs a
+  // focus timer of at least 10 minutes. A page can't see other tabs, so BOON watches what it can:
+  // coming back to BOON early, or closing the work tab.
+  const FOCUS_MIN = 10;
+  const SCHOOL_WORDS = /\b(home ?work|hw|stud(y|ying)|revis(e|ion|ing)|assignments?|essays?|exams?|tests?|quiz(zes)?|projects?|school|class(es|work)?|lectures?|lab reports?|readings?|worksheets?|math|maths|science|history|english|chemistry|physics|biology|korean|spanish|french|chinese|mandarin|economics|classroom)\b/i;
+  const IMPORTANT_WORDS = /\b(important|urgent|asap|deadline|due|critical|must do|don'?t forget)\b/i;
+  const SITES = [
+    [/google docs?|\bgdocs?\b/i, "https://docs.google.com/"],
+    [/google slides?/i, "https://docs.google.com/presentation/"],
+    [/google sheets?/i, "https://docs.google.com/spreadsheets/"],
+    [/google classroom|\bclassroom\b/i, "https://classroom.google.com/"],
+    [/khan ?academy/i, "https://www.khanacademy.org/"],
+    [/quizlet/i, "https://quizlet.com/"],
+    [/managebac/i, "https://www.managebac.com/"],
+    [/schoology/i, "https://www.schoology.com/"],
+    [/canvas/i, "https://canvas.instructure.com/"],
+    [/desmos/i, "https://www.desmos.com/calculator"],
+  ];
+  // Minutes by what the work is: the site opened, then the kind of task.
+  const SITE_FOCUS = [[/docs\.google\.com\/?$|docs\.google\.com\/document/, 30], [/presentation|spreadsheets/, 25], [/classroom|managebac|schoology|canvas/, 25], [/khanacademy/, 20], [/quizlet/, 15], [/desmos/, 15]];
+  const TASK_FOCUS = [[/\b(exams?|test prep|essays?|projects?|revis(e|ion|ing)|lab reports?)\b/i, 30], [/\b(home ?work|hw|assignments?|stud(y|ying)|worksheets?|practice)\b/i, 25], [/\b(readings?|read)\b/i, 20], [/\b(quiz(zes)?|vocab|flash ?cards?)\b/i, 15]];
+
+  function cleanLink(v) {
+    const s = String(v || "").trim();
+    if (!s) return "";
+    const url = /^https?:\/\//i.test(s) ? s : /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(s) ? "https://" + s : "";
+    try { return url && new URL(url).protocol.startsWith("http") ? new URL(url).href : ""; } catch { return ""; }
+  }
+  const siteName = (link) => { try { return new URL(link).hostname.replace(/^www\./, ""); } catch { return "your work"; } };
+
+  function focusPlan(a, text, task) {
+    const words = `${text} ${task}`;
+    const school = SCHOOL_WORDS.test(words);
+    const important = a.important === true || a.important === "true" || school || IMPORTANT_WORDS.test(words);
+    if (!important) return null;
+    let link = cleanLink(a.link);
+    if (!link) link = SITES.find(([re]) => re.test(words))?.[1] || "";
+    if (!link && school) link = cleanLink(store.get("schoolLink", "")) || "https://classroom.google.com/";
+    let minutes = Number(a.focus_minutes);
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      minutes = (link && SITE_FOCUS.find(([re]) => re.test(link))?.[1]) || TASK_FOCUS.find(([re]) => re.test(words))?.[1] || (school ? 15 : FOCUS_MIN);
+    }
+    return { kind: school ? "school" : "important", link, focus: Math.min(180, Math.max(FOCUS_MIN, Math.round(minutes))) };
+  }
+
+  // The alarm: loud square-wave beeps on a loop until Done, Snooze or Start. Played from a looping
+  // buffer on the audio clock, so a background tab keeps it steady.
+  let alarm = null;
+  function alarmBuffer() {
+    const rate = audio.sampleRate, len = Math.round(rate * 1.6), data = new Float32Array(len);
+    const beeps = [[0, 880], [0.18, 1175], [0.36, 880], [0.54, 1175]];
+    for (const [start, freq] of beeps) {
+      const s0 = Math.round(start * rate), n = Math.round(0.14 * rate), fade = Math.round(0.004 * rate);
+      for (let i = 0; i < n; i++) {
+        const env = Math.min(1, i / fade, (n - i) / fade);
+        data[s0 + i] = (Math.sin(2 * Math.PI * freq * i / rate) >= 0 ? 0.85 : -0.85) * env;
+      }
+    }
+    const buf = audio.createBuffer(1, len, rate);
+    buf.copyToChannel(data, 0);
+    return buf;
+  }
+  function startAlarm() {
+    if (!audio || alarm) return;
+    try {
+      if (audio.state === "suspended") audio.resume();
+      const src = audio.createBufferSource();
+      src.buffer = alarmBuffer();
+      src.loop = true;
+      src.connect(audio.destination);
+      src.start();
+      alarm = src;
+    } catch {}
+  }
+  function stopAlarm() {
+    try { alarm?.stop(); } catch {}
+    alarm = null;
+  }
+  const syncAlarm = () => { if (!els.alerts.querySelector(".alert-card.ringing")) stopAlarm(); };
+  const audioReady = () => !!audio && audio.state === "running";
+
+  let focusWin = null;
+  const loadFocus = () => store.get("focus", null);
+  const clock = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${pad2(s % 60)}`; };
+
+  function setReminderStatus(id, status) {
+    const list = loadReminders();
+    const it = list.find((x) => x.id === id);
+    if (it) { it.status = status; saveReminders(list); }
+  }
+
+  function startFocus(r) {
+    if (loadFocus()) finishFocus(false);
+    if (r.link) {
+      focusWin = window.open(r.link, "boon-focus");
+      try { focusWin?.focus(); } catch {}
+    }
+    const now = Date.now();
+    store.set("focus", { rid: r.id, text: r.text, link: r.link || "", minutes: r.focus, start: now, end: now + r.focus * 60000 });
+    setReminderStatus(r.id, "focusing");
+    renderFocus();
+  }
+
+  function backToWork() {
+    const f = loadFocus();
+    if (!f?.link) return;
+    if (focusWin && !focusWin.closed) { try { focusWin.focus(); } catch {} }
+    else focusWin = window.open(f.link, "boon-focus");
+    els.focusNag.hidden = true;
+  }
+
+  function finishFocus(completed) {
+    const f = loadFocus();
+    if (!f) return;
+    store.set("focus", null);
+    focusWin = null;
+    setReminderStatus(f.rid, "done");
+    renderFocus();
+    renderReminders();
+    if (!completed) return;
+    const mins = Math.round((Math.min(Date.now(), f.end) - f.start) / 60000);
+    const card = document.createElement("div");
+    card.className = "alert-card";
+    card.innerHTML = `<div class="alert-icon" aria-hidden="true">🎉</div><div class="alert-main"><div class="alert-title">Focus done</div>
+      <div class="alert-text"></div><div class="alert-time"></div>
+      <div class="alert-actions"><button type="button" class="chip-btn primary" data-act="close">Nice</button></div></div>`;
+    card.querySelector(".alert-text").textContent = f.text;
+    card.querySelector(".alert-time").textContent = `${mins} minute${mins === 1 ? "" : "s"} of focus. You can take a break.`;
+    card.onclick = (e) => { if (e.target.dataset?.act) { card.remove(); if (!els.alerts.children.length) document.title = baseTitle; } };
+    els.alerts.appendChild(card);
+    chime();
+    notify("🎉 Focus done: " + f.text, `${mins} minutes of focus`, "focus-" + f.rid);
+  }
+
+  function renderFocus() {
+    const f = loadFocus();
+    els.focusBar.hidden = !f;
+    if (!f) {
+      els.focusNag.hidden = true;
+      if (/^🎯/.test(document.title)) document.title = baseTitle;
+      return;
+    }
+    const left = f.end - Date.now();
+    const canFinish = Date.now() - f.start >= FOCUS_MIN * 60000;
+    els.focusText.textContent = f.text;
+    els.focusClock.textContent = clock(left);
+    els.focusBack.hidden = !f.link;
+    els.focusEnd.hidden = !canFinish;
+    els.focusNagClock.textContent = clock(left);
+    els.focusNagText.textContent = f.text;
+    els.focusNagBack.hidden = !f.link;
+    document.title = `🎯 ${clock(left)} · ${f.text}`;
+  }
+
+  function tickFocus() {
+    const f = loadFocus();
+    if (!f) { if (!els.focusBar.hidden) renderFocus(); return; }
+    if (Date.now() >= f.end) return finishFocus(true);
+    renderFocus();
+    if (focusWin && focusWin.closed) {
+      focusWin = null;
+      els.focusNagMsg.textContent = `You closed ${siteName(f.link)} with ${clock(f.end - Date.now())} to go.`;
+      els.focusNag.hidden = false;
+      chime();
+      notify("🎯 Back to " + f.text, `You closed your work tab with ${clock(f.end - Date.now())} to go.`, "focus-" + f.rid);
+    }
+  }
+
+  // Coming back to BOON during focus shows the "stay on it" screen.
+  function onFocusVisibility() {
+    const f = loadFocus();
+    if (!f || document.visibilityState !== "visible" || !f.link) return;
+    els.focusNagMsg.textContent = "You're back in BOON early. BOON can't see your other tabs, but it notices when you come back here.";
+    els.focusNag.hidden = false;
+    renderFocus();
+  }
+
+  function notify(title, body, tag) {
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    try { const n = new Notification(title, { body, tag, requireInteraction: true }); n.onclick = () => { window.focus(); n.close(); }; } catch {}
+  }
+
   const baseTitle = document.title;
   function ring(r, quiet = false) {
     if (els.alerts.querySelector(`[data-rid="${r.id}"]`)) return;
     const late = (r.rangAt || Date.now()) - r.at > 120000;
+    const focus = r.focus >= FOCUS_MIN;
     const card = document.createElement("div");
-    card.className = "alert-card";
+    card.className = "alert-card" + (focus ? " important" : "") + (quiet ? "" : " ringing");
     card.setAttribute("role", "alertdialog");
     card.dataset.rid = r.id;
-    card.innerHTML = `<div class="alert-icon" aria-hidden="true">⏰</div>
+    card.innerHTML = focus
+      ? `<div class="alert-icon" aria-hidden="true">${r.kind === "school" ? "📚" : "🎯"}</div>
+      <div class="alert-main"><div class="alert-title">${r.kind === "school" ? "School work" : "Important"}</div><div class="alert-text"></div>
+      <div class="alert-time"></div><div class="alert-plan"></div>
+      <div class="alert-actions"><button type="button" class="chip-btn" data-act="snooze">Snooze 5 min</button><button type="button" class="chip-btn primary" data-act="focus"></button></div></div>`
+      : `<div class="alert-icon" aria-hidden="true">⏰</div>
       <div class="alert-main"><div class="alert-title">Reminder</div><div class="alert-text"></div>
       <div class="alert-time"></div>
       <div class="alert-actions"><button type="button" class="chip-btn" data-act="snooze">Snooze 5 min</button><button type="button" class="chip-btn primary" data-act="done">Done</button></div></div>`;
     card.querySelector(".alert-text").textContent = r.text;
     card.querySelector(".alert-time").textContent = (late ? "Was due " : "") + fmtWhen(r.at);
+    if (focus) {
+      card.querySelector(".alert-plan").textContent = r.link
+        ? `Opens ${siteName(r.link)} and keeps you on it for ${r.focus} minutes.`
+        : `A ${r.focus}-minute focus timer.`;
+      card.querySelector('[data-act="focus"]').textContent = `Start · ${r.focus} min`;
+    }
     card.onclick = (e) => {
       const act = e.target.dataset?.act;
       if (!act) return;
@@ -1575,23 +1820,20 @@ dialog input:focus { border-color: #4a4f8a; }
       const it = list.find((x) => x.id === r.id);
       if (it) {
         if (act === "snooze") { it.at = Date.now() + 5 * 60000; it.status = "pending"; }
-        else it.status = "done";
+        else if (act === "done") it.status = "done";
         saveReminders(list);
       }
       card.remove();
+      syncAlarm();
       if (!els.alerts.children.length) document.title = baseTitle;
+      if (act === "focus") startFocus(it || r);
       renderReminders();
     };
     els.alerts.appendChild(card);
     document.title = "⏰ " + r.text;
     if (quiet) return;
-    chime();
-    if ("Notification" in window && Notification.permission === "granted") {
-      try {
-        const n = new Notification("⏰ " + r.text, { body: "BOON reminder · " + fmtWhen(r.at), tag: r.id, requireInteraction: true });
-        n.onclick = () => { window.focus(); n.close(); };
-      } catch {}
-    }
+    startAlarm();
+    notify((focus ? (r.kind === "school" ? "📚 " : "🎯 ") : "⏰ ") + r.text, "BOON reminder · " + fmtWhen(r.at) + (focus ? " · open BOON to start" : ""), r.id);
   }
 
   function checkReminders() {
@@ -1605,17 +1847,21 @@ dialog input:focus { border-color: #4a4f8a; }
     renderReminders();
   }
 
+  function tick() { checkReminders(); tickFocus(); renderSoundHint(); }
+
   function startReminderClock() {
     let ticking = false;
     try {
       const src = URL.createObjectURL(new Blob(["setInterval(() => postMessage(0), 1000);"], { type: "text/javascript" }));
       const w = new Worker(src);
-      w.onmessage = checkReminders;
+      w.onmessage = tick;
       ticking = true;
     } catch {}
     // Backup ticker, in case the worker can't start (it still runs at least once a minute in background tabs).
-    setInterval(checkReminders, ticking ? 15000 : 1000);
-    document.addEventListener("visibilitychange", checkReminders);
+    setInterval(tick, ticking ? 15000 : 1000);
+    document.addEventListener("visibilitychange", tick);
+    document.addEventListener("visibilitychange", onFocusVisibility);
+    addEventListener("storage", (e) => { if (e.key === "boon.focus") renderFocus(); });
     // Another BOON tab snoozed or finished one: drop its card here too.
     addEventListener("storage", (e) => {
       if (e.key !== "boon.reminders") return;
@@ -1623,6 +1869,7 @@ dialog input:focus { border-color: #4a4f8a; }
       els.alerts.querySelectorAll("[data-rid]").forEach((card) => {
         if (list.find((r) => r.id === card.dataset.rid)?.status !== "rang") card.remove();
       });
+      syncAlarm();
       // Rung by another tab: show it here too, with sound if this is the tab being looked at.
       list.filter((r) => r.status === "rang").forEach((r) => ring(r, document.visibilityState !== "visible"));
       if (!els.alerts.children.length) document.title = baseTitle;
@@ -1631,7 +1878,14 @@ dialog input:focus { border-color: #4a4f8a; }
     // Cards that rang but weren't answered (page reloaded or closed) come back until Done or Snooze.
     loadReminders().filter((r) => r.status === "rang").forEach((r) => ring(r, true));
     checkReminders();
+    tickFocus();
     renderReminders();
+  }
+
+  // Browsers only allow sound after a click on the page, so say so while a reminder is waiting.
+  function renderSoundHint() {
+    const waiting = loadReminders().some((r) => r.status === "pending" || r.status === "rang");
+    els.soundHint.hidden = !waiting || audioReady();
   }
 
   // ----- reminders panel -----
@@ -1640,6 +1894,7 @@ dialog input:focus { border-color: #4a4f8a; }
     const upcoming = list.filter((r) => r.status === "pending").sort((a, b) => a.at - b.at);
     els.reminderCount.textContent = upcoming.length || "";
     els.reminderCount.hidden = !upcoming.length;
+    renderSoundHint();
     if (!els.reminders.open) return;
     const perm = "Notification" in window ? Notification.permission : "unsupported";
     els.notifyBtn.hidden = perm !== "default";
@@ -1656,7 +1911,8 @@ dialog input:focus { border-color: #4a4f8a; }
       row.className = "reminder-row";
       row.innerHTML = `<div><div class="reminder-text"></div><div class="reminder-when"></div></div><button type="button" class="btn" aria-label="Cancel reminder">Cancel</button>`;
       row.querySelector(".reminder-text").textContent = r.text;
-      row.querySelector(".reminder-when").textContent = `${fmtWhen(r.at)} · ${untilText(r.at)}`;
+      row.querySelector(".reminder-when").textContent = `${fmtWhen(r.at)} · ${untilText(r.at)}` +
+        (r.focus ? ` · ${r.link ? siteName(r.link) + ", " : ""}${r.focus} min focus` : "");
       row.querySelector("button").onclick = () => {
         const all = loadReminders();
         const it = all.find((x) => x.id === r.id);
@@ -1689,7 +1945,7 @@ dialog input:focus { border-color: #4a4f8a; }
   function renderAgentHint() {
     const m = agentModel();
     els.hint.innerHTML = m
-      ? `Agent mode: BOON uses tools (calculator, bill splitter, dates, reminders) with ${escapeHtml(m.label)}${m.local ? " on this computer" : ""} and shows every step.`
+      ? `Agent mode: BOON uses tools (calculator, bill splitter, dates, reminders and focus timers) with ${escapeHtml(m.label)}${m.local ? " on this computer" : ""} and shows every step.`
       : `Agent mode needs a model that can use tools. Run <code>ollama pull ${AGENT_DEFAULT}</code> on this computer, or add an OpenRouter key.`;
   }
 
@@ -1892,6 +2148,7 @@ dialog input:focus { border-color: #4a4f8a; }
     els.nameInput.value = store.get("name", "");
     els.hfInput.value = store.get("hf", "");
     els.pollenInput.value = store.get("pollen", "");
+    els.schoolInput.value = store.get("schoolLink", "");
     els.settings.showModal();
     (els.keyInput.value ? els.nameInput : els.keyInput).focus();
   }
@@ -1901,6 +2158,7 @@ dialog input:focus { border-color: #4a4f8a; }
     store.set("name", els.nameInput.value.trim());
     store.set("hf", els.hfInput.value.trim());
     store.set("pollen", els.pollenInput.value.trim());
+    store.set("schoolLink", els.schoolInput.value.trim());
     renderGreeting();
     renderHint();
   });
@@ -1933,6 +2191,11 @@ dialog input:focus { border-color: #4a4f8a; }
   els.openSettings.onclick = openSettings;
   els.openReminders.onclick = () => { els.reminders.showModal(); renderReminders(); };
   els.notifyBtn.onclick = askNotifications;
+  els.soundHint.onclick = () => { unlockAudio(); setTimeout(renderSoundHint, 50); };
+  els.focusBack.onclick = backToWork;
+  els.focusNagBack.onclick = backToWork;
+  els.focusNagStay.onclick = () => { els.focusNag.hidden = true; };
+  els.focusEnd.onclick = () => finishFocus(true);
   els.menuBtn.onclick = () => els.app.classList.toggle("nav-open");
   els.scroll.addEventListener("click", () => els.app.classList.remove("nav-open"));
 
