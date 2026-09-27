@@ -2674,6 +2674,16 @@ dialog input:focus { border-color: #4a4f8a; }
     return out;
   }
 
+  // Small models copy BOON's internal ids ("t4k2p9: buy milk") into answers; the user never needs them.
+  function hideIds(text, steps) {
+    const ids = new Set([...loadNotes(), ...loadTodos(), ...loadReminders()].map((x) => x.id));
+    for (const s of steps) if (s.args?.id) ids.add(String(s.args.id));
+    const isId = (w) => ids.has(w.toLowerCase());
+    return text
+      .replace(/[ \t]*\((?:id:?[ \t]*)?([a-z0-9]{6})\)/gi, (all, w) => isId(w) ? "" : all)
+      .replace(/(^|[ \t]*)(\*\*|`)?(?:\bid:?[ \t]*)?\b([a-z0-9]{6})\b\2(:[ \t]*)?/gim, (all, pre, q, w, colon) => isId(w) ? (colon ? pre : "") : all);
+  }
+
   function parseArgs(raw) {
     if (raw && typeof raw === "object") return raw;
     try { return JSON.parse(raw || "{}") || {}; } catch { return { _raw: String(raw) }; }
@@ -2772,7 +2782,7 @@ dialog input:focus { border-color: #4a4f8a; }
             messages.push({ role: "assistant", content }, { role: "user", content: nudge });
             continue;
           }
-          m.content = content || "_Done._";
+          m.content = hideIds(content, m.steps) || "_Done._";
           break;
         }
         messages.push({ role: "assistant", content, tool_calls: calls });
