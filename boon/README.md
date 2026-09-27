@@ -94,8 +94,12 @@ The locking and the island need the **BOON Focus** Chrome add-on in `boon/extens
 After pulling a new version of BOON, click the reload arrow on the BOON Focus card in `chrome://extensions`.
 To lock Incognito windows too, click **Details** on the card and turn on **Allow in Incognito**.
 Without the add-on, School and Hagwon still open the link and run the timer, and BOON asks you to go back if you
-return early, but it can't stop you switching tabs. The add-on only acts during a focus session. It works inside
-Chrome only: other Mac apps (like Calculator) are never blocked.
+return early, but it can't stop you switching tabs. The add-on only acts during a focus session.
+
+**Leaving Chrome.** If you swipe to another desktop or app (three-finger swipe, ⌘Tab, the Dock) during focus, the add-on
+brings Chrome back after about 2 seconds, and the island counts how many times you left. It can't block the swipe
+itself, and other Mac apps (including Calculator) aren't allowed during focus: use Desmos or calculator.net in Chrome.
+Quitting Chrome (⌘Q) always gets you out, so the add-on can never trap your Mac.
 
 **Safety stop.** The add-on never closes a tab or window. If it can't open or show your work tab (or the question)
 three times within two minutes, it turns focus off by itself and BOON shows "Focus stopped", so Chrome keeps working.

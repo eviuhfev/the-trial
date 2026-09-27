@@ -30,6 +30,7 @@
       .icon { font-size: 16px; }
       .label { color: #a7aac4; font-weight: 500; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
       .clock { font-size: 17px; font-weight: 700; color: #8fb0ff; font-variant-numeric: tabular-nums; }
+      .left { font-size: 12px; font-weight: 600; color: #ffcf7a; }
       button { all: unset; cursor: pointer; font: 600 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         padding: 8px 12px; border-radius: 999px; background: rgba(255,255,255,.1); color: #e8e8fb; text-align: center; }
       button:hover { background: rgba(255,255,255,.18); }
@@ -43,6 +44,7 @@
     </style>
     <div class="island" role="status" aria-live="off">
       <div class="row"><span class="icon" aria-hidden="true"></span><span class="label"></span><span class="clock"></span>
+        <span class="left" title="Times you left Chrome during this focus" hidden></span>
         <button type="button" class="off">Turn off</button></div>
       <div class="confirm" hidden>Turning off early gives you <b>a hard algebra question</b>. You have 5 minutes and 3 tries,
         and every other tab stays locked until you finish.
@@ -50,7 +52,7 @@
     </div>`;
     ui = {
       box: root.querySelector(".island"), icon: root.querySelector(".icon"), label: root.querySelector(".label"),
-      clock: root.querySelector(".clock"), off: root.querySelector(".off"), confirm: root.querySelector(".confirm"),
+      clock: root.querySelector(".clock"), left: root.querySelector(".left"), off: root.querySelector(".off"), confirm: root.querySelector(".confirm"),
       keep: root.querySelector(".keep"), go: root.querySelector(".go"),
     };
     ui.off.onclick = () => { confirming = !confirming; render(); };
@@ -112,6 +114,8 @@
     ui.icon.textContent = session.quiz ? "🧮" : session.mode === "hagwon" ? "🎧" : "🏫";
     ui.label.textContent = session.quiz ? "Question open" : session.mode === "hagwon" ? "Hagwon" : "School";
     ui.clock.textContent = clock((session.quiz ? session.quiz.until : session.end) - Date.now());
+    ui.left.textContent = `left ${session.left}×`;
+    ui.left.hidden = !session.left;
     ui.off.hidden = !!session.quiz;
     ui.off.textContent = confirming ? "Cancel" : "Turn off";
     ui.confirm.hidden = !confirming || !!session.quiz;

@@ -2,7 +2,8 @@
 // Hagwon: the YouTube mix (no Shorts or other videos), a calculator and BOON.
 // School: the class page, pages opened from it, email, a calculator and BOON.
 // The session ends by itself when the timer runs out. Turning it off early takes a hard algebra question,
-// and while that question is open every other tab is locked.
+// and while that question is open every other tab is locked. Leaving Chrome (another app or desktop) brings
+// the student back after a moment.
 importScripts("algebra.js");
 
 const EMAIL = ["mail.google.com", "gmail.com", "outlook.office.com", "outlook.office365.com", "outlook.live.com",
@@ -485,8 +486,41 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   if (tab && !(await allowedNow(s, tab))) await bringBack();
 });
 
+// ----- leaving Chrome -----
+// A three-finger swipe to another desktop, ⌘Tab or the Dock takes the student out of Chrome. Chrome can't see
+// other apps, only that none of its windows has focus, so after a short grace it brings its window back (on a
+// Mac that also switches back to Chrome's desktop). Quitting Chrome (⌘Q) still ends this, so it can never trap
+// the Mac, and if Chrome can't bring itself to the front it stops trying until the student comes back.
+const AWAY_GRACE_MS = 2000, AWAY_RETRY_MS = 3000, AWAY_TRIES = 10;
+let awayTimer = 0, awayTries = 0;
+function leftChrome() {
+  if (awayTimer) return;
+  awayTries = 0;
+  awayTimer = setTimeout(pullBack, AWAY_GRACE_MS);
+}
+function cameBack() {
+  clearTimeout(awayTimer);
+  awayTimer = 0;
+}
+async function pullBack() {
+  awayTimer = 0;
+  const s = await getSession();
+  if (!s) return;
+  const wins = await chrome.windows.getAll().catch(() => null);
+  if (!wins || wins.some((w) => w.focused) || awayTries >= AWAY_TRIES) return;
+  if (awayTries++ === 0) { s.left = (s.left || 0) + 1; await saveSession(); }
+  // Back to the window they left if it shows an allowed page (a file picker may be open there); otherwise to
+  // the work, or the question.
+  const last = s.quiz ? null : await chrome.windows.getLastFocused({ populate: true }).catch(() => null);
+  const tab = last?.tabs?.find((t) => t.active);
+  if (tab && (await allowedNow(s, tab))) await chrome.windows.update(last.id, { focused: true }).catch(() => {});
+  else await bringBack();
+  if (!awayTimer) awayTimer = setTimeout(pullBack, AWAY_RETRY_MS);
+}
+
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
-  if (windowId === chrome.windows.WINDOW_ID_NONE) return;   // another app (Calculator, Mail) is fine
+  if (windowId === chrome.windows.WINDOW_ID_NONE) { leftChrome(); return; }
+  cameBack();
   const s = await getSession();
   if (!s) return;
   const [tab] = await chrome.tabs.query({ active: true, windowId });

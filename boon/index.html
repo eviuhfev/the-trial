@@ -1743,7 +1743,7 @@ dialog input:focus { border-color: #4a4f8a; }
   const HAGWON_DEFAULT = "https://www.youtube.com/watch?v=UGYjHg8Xu7U&list=RDUGYjHg8Xu7U&start_radio=1";
   const HAGWON_MINUTES = 25;
   const hasLock = () => !!document.documentElement.dataset.boonFocus;
-  const LOCK_VERSION = "1.1.3";   // boon/extension/manifest.json
+  const LOCK_VERSION = "1.2.0";   // boon/extension/manifest.json
   let lockIncognito = true;       // BOON Focus may run in Incognito windows
   let extSeq = 0;
   const extWaiting = new Map();
@@ -2061,7 +2061,7 @@ dialog input:focus { border-color: #4a4f8a; }
     els.lockNote.innerHTML = hasLock() && document.documentElement.dataset.boonFocus !== LOCK_VERSION
       ? "🔄 BOON Focus has an update: open <code>chrome://extensions</code>, click the reload arrow on BOON Focus, then reload BOON."
       : hasLock()
-      ? "🔒 BOON Focus is on: School and Hagwon lock your other tabs until the timer ends, and the island shows the time left." +
+      ? "🔒 BOON Focus is on: School and Hagwon lock your other tabs until the timer ends, bring you back to Chrome if you swipe to another app or desktop, and the island shows the time left." +
         (lockIncognito ? "" : " Incognito windows aren't locked yet: on the BOON Focus card in <code>chrome://extensions</code>, click <b>Details</b> and turn on <b>Allow in Incognito</b>.")
       : "🔓 To lock tabs during School and Hagwon, add BOON Focus to Chrome once: open <code>chrome://extensions</code>, turn on <b>Developer mode</b>, click <b>Load unpacked</b> and pick the <code>boon/extension</code> folder, then reload BOON.";
     els.reminderList.innerHTML = "";
