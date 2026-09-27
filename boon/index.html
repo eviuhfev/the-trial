@@ -307,6 +307,32 @@ details.think div { white-space: pre-wrap; border-left: 2px solid var(--edge); p
 .step details summary { cursor: pointer; user-select: none; }
 .step details div { white-space: pre-wrap; border-left: 2px solid var(--edge); padding-left: 12px; margin-top: 6px; max-height: 220px; overflow-y: auto; color: var(--ink-faint); font-size: 13px; }
 
+/* ---------- reminders ---------- */
+.settings-btn .count { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--blue); color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+.settings-btn .count[hidden] { display: none; }
+.alerts { position: fixed; top: 16px; right: 16px; z-index: 50; display: flex; flex-direction: column; gap: 10px; width: min(360px, calc(100vw - 32px)); }
+.alert-card {
+  display: flex; gap: 12px; padding: 16px;
+  border-radius: 18px; border: 1px solid #3a3f78;
+  background: rgba(24,26,44,.97); box-shadow: 0 14px 40px rgba(0,0,0,.5), 0 0 24px rgba(91,140,245,.25);
+  animation: pop .25s ease-out;
+}
+@keyframes pop { from { transform: translateY(-8px); opacity: 0; } }
+.alert-icon { font-size: 26px; line-height: 1; }
+.alert-main { flex: 1; min-width: 0; }
+.alert-title { font-size: 12px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .05em; }
+.alert-text { font-size: 17px; font-weight: 600; margin: 2px 0; word-wrap: break-word; }
+.alert-time { font-size: 13px; color: var(--ink-dim); }
+.alert-actions { display: flex; gap: 8px; margin-top: 12px; }
+.alert-actions .chip-btn { height: 34px; padding: 0 14px; }
+.reminder-list { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; max-height: 50vh; overflow-y: auto; }
+.reminder-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 12px; background: var(--field); }
+.reminder-text { font-weight: 600; word-break: break-word; }
+.reminder-when { font-size: 13px; color: var(--ink-dim); }
+.reminder-row .btn { height: 34px; padding: 0 12px; flex: none; }
+dialog p.small { font-size: 12px; margin: 0; }
+@media (prefers-reduced-motion: reduce) { .alert-card { animation: none; } }
+
 /* ---------- settings dialog ---------- */
 dialog {
   width: min(480px, calc(100vw - 32px));
@@ -364,6 +390,10 @@ dialog input:focus { border-color: #4a4f8a; }
     <button class="new-chat" id="newChat"><span aria-hidden="true">✦</span> New chat</button>
     <input class="search" id="search" type="search" placeholder="Search chats" aria-label="Search chats" />
     <nav class="chat-list" id="chatList" aria-label="Chats"></nav>
+    <button class="settings-btn" id="openReminders">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M5 3 2 6M19 3l3 3"/></svg>
+      Reminders <span class="count" id="reminderCount" hidden></span>
+    </button>
     <button class="settings-btn" id="openSettings">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       Settings
@@ -411,6 +441,19 @@ dialog input:focus { border-color: #4a4f8a; }
     </div>
   </main>
 </div>
+
+<div class="alerts" id="alerts" aria-live="assertive"></div>
+
+<dialog id="reminders">
+  <form method="dialog">
+    <h2>Reminders</h2>
+    <p id="notifyNote"></p>
+    <button type="button" class="btn primary" id="notifyBtn" hidden>Turn on notifications</button>
+    <div class="reminder-list" id="reminderList"></div>
+    <p class="small">Reminders ring while BOON is open in a browser tab (it can be in the background). Ones due while BOON was closed ring the next time you open it.</p>
+    <div class="dialog-actions"><button class="btn" value="close">Close</button></div>
+  </form>
+</dialog>
 
 <dialog id="settings">
   <form method="dialog" id="settingsForm">
@@ -483,6 +526,8 @@ dialog input:focus { border-color: #4a4f8a; }
     modelSelect: $("modelSelect"), hint: $("hint"),
     settings: $("settings"), keyInput: $("keyInput"), nameInput: $("nameInput"), hfInput: $("hfInput"), pollenInput: $("pollenInput"),
     openSettings: $("openSettings"), menuBtn: $("menuBtn"),
+    alerts: $("alerts"), reminders: $("reminders"), openReminders: $("openReminders"), reminderCount: $("reminderCount"),
+    reminderList: $("reminderList"), notifyBtn: $("notifyBtn"), notifyNote: $("notifyNote"),
   };
 
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -1224,13 +1269,19 @@ dialog input:focus { border-color: #4a4f8a; }
     const now = new Date();
     const pad = (n) => String(n).padStart(2, "0");
     const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    return AGENT_PROMPT + ` Today is ${now.toLocaleDateString("en-US", { weekday: "long" })} ${today}` +
+    const time = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    return AGENT_PROMPT + ` Today is ${now.toLocaleDateString("en-US", { weekday: "long" })} ${today}, and the time is ${time}` +
       ` (time zone ${Intl.DateTimeFormat().resolvedOptions().timeZone}). For holidays and events, use the next upcoming date.`;
   };
   const AGENT_PROMPT = SYSTEM_PROMPT +
     " You are in Agent mode: you complete tasks by calling tools, one step at a time. " +
     "Never do math or date math in your head: use the calculator for arithmetic, get_datetime for today's date or the time, " +
+    "Put the whole calculation in one calculator expression, e.g. 64500*(1+0.18)/3; if a tool result needs more math, call the calculator again. " +
+    "A bill with a tip split N ways means (bill + tip) / N per person, unless the user says to split only the tip. " +
+    "Never write arithmetic out in your answer. " +
     "days_between to count days between dates, and add_days for questions like \"what date is 100 days from today\". " +
+    "To remind the user, call set_reminder with the exact time including minutes (or in_minutes); list_reminders and cancel_reminder manage them. " +
+    "Never say a reminder is set unless set_reminder succeeded. " +
     "When the task is done, give a short, clear final answer.";
 
   const MATH_NAMES = new Set(["sqrt", "cbrt", "abs", "round", "floor", "ceil", "sin", "cos", "tan", "asin", "acos", "atan",
@@ -1324,6 +1375,258 @@ dialog input:focus { border-color: #4a4f8a; }
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} (${d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })})`;
     },
   };
+  // ---------- reminders ----------
+  // Saved in this browser. A worker ticks every second (background tabs throttle normal timers),
+  // and a due reminder rings, pops a card in BOON and, if allowed, a system notification.
+  // They only go off while BOON is open in a tab; ones missed while it was closed ring on the next visit.
+  const loadReminders = () => store.get("reminders", []);
+  const saveReminders = (list) => store.set("reminders", list);
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const fmtWhen = (ms) => {
+    const d = new Date(ms), now = new Date();
+    const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const sameDay = (a, b) => a.toDateString() === b.toDateString();
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    if (sameDay(d, now)) return `today at ${time}`;
+    if (sameDay(d, tomorrow)) return `tomorrow at ${time}`;
+    return `${d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" })} at ${time}`;
+  };
+  const untilText = (ms) => {
+    const mins = Math.round((ms - Date.now()) / 60000);
+    if (mins < 1) return "in less than a minute";
+    if (mins < 60) return `in ${mins} minute${mins === 1 ? "" : "s"}`;
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return `in ${h} hour${h === 1 ? "" : "s"}${m ? ` ${m} minute${m === 1 ? "" : "s"}` : ""}`;
+  };
+
+  // "8:52 am", "8:52", "20:30", "2026-09-28 07:00" plus an optional date, or minutes from now.
+  function reminderTime(a) {
+    const now = new Date();
+    if (a.in_minutes != null && a.in_minutes !== "") {
+      const mins = Number(a.in_minutes);
+      if (!Number.isFinite(mins) || mins <= 0) throw new Error("in_minutes must be a positive number");
+      return now.getTime() + mins * 60000;
+    }
+    let date = a.date ? String(a.date).trim() : "";
+    let time = String(a.time ?? "").trim();
+    const full = time.match(/^(\d{4}-\d{1,2}-\d{1,2})(?:[T\s]+(.*))?$/);
+    if (full) { date = date || full[1]; time = full[2] || ""; }
+    if (!time) throw new Error("say when: a time like 8:52 am, or in_minutes");
+    const m = time.toLowerCase().replace(/\./g, "").replace(/(?:z|[+-]\d{2}:?\d{2})$/, "").trim()
+      .match(/^(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*(am|pm)?$/);
+    if (!m) throw new Error(`"${a.time}" isn't a time like 8:52 am or 20:30`);
+    let h = +m[1];
+    const min = m[2] ? +m[2] : 0, ap = m[3];
+    if (min > 59 || h > 23 || (ap && (h < 1 || h > 12))) throw new Error(`${a.time} isn't a real time`);
+    if (ap === "pm" && h < 12) h += 12;
+    if (ap === "am" && h === 12) h = 0;
+    let day;
+    if (!date || /^today$/i.test(date)) day = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    else if (/^tomorrow$/i.test(date)) day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    else day = parseDay(date);
+    let at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, min).getTime();
+    if (!date || /^today$/i.test(date)) {
+      // No am/pm and already past: "4:30" at 3 PM means 4:30 PM. Otherwise the next day.
+      if (at <= now.getTime() && !ap && h < 12 && at + 12 * 3600000 > now.getTime()) at += 12 * 3600000;
+      else if (at <= now.getTime() && !date) at = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1, h, min).getTime();
+    }
+    if (at <= now.getTime()) throw new Error(`${fmtWhen(at)} has already passed`);
+    return at;
+  }
+
+  TOOLS.set_reminder = {
+    label: "Set a reminder",
+    spec: {
+      description: "Remind the user at a time: BOON plays a sound and shows a pop-up (and a system notification if allowed) at that exact minute. " +
+        "Give either 'time' (like '8:52 am' or '20:30', optionally with 'date') or 'in_minutes'.",
+      parameters: { type: "object", properties: {
+        text: { type: "string", description: "What to remind them about, e.g. 'study'" },
+        time: { type: "string", description: "Clock time with minutes, e.g. '8:52 am' or '20:30'" },
+        date: { type: "string", description: "Optional YYYY-MM-DD or 'tomorrow'; defaults to the next time that clock time comes around" },
+        in_minutes: { type: "number", description: "Instead of time: minutes from now, e.g. 10" },
+      }, required: ["text"] },
+    },
+    show: (a) => [a.in_minutes ? `in ${a.in_minutes} min` : [a.date, a.time].filter(Boolean).join(" "), a.text].filter(Boolean).join(" · "),
+    run: (a) => {
+      const text = String(a.text || "").trim() || "Reminder";
+      const at = reminderTime(a);
+      const list = loadReminders();
+      const r = { id: "r" + uid().slice(-5), text, at, created: Date.now(), status: "pending" };
+      list.push(r);
+      saveReminders(list);
+      renderReminders();
+      const ask = "Notification" in window && Notification.permission !== "granted"
+        ? " It will ring and pop up inside BOON; BOON must stay open in a browser tab." : " BOON must stay open in a browser tab.";
+      return `Reminder set for ${fmtWhen(at)} (${untilText(at)}): "${text}".${ask}`;
+    },
+  };
+  TOOLS.list_reminders = {
+    label: "Checked reminders",
+    spec: { description: "List the user's upcoming reminders with their ids.", parameters: { type: "object", properties: {} } },
+    show: () => "",
+    run: () => {
+      const list = loadReminders().filter((r) => r.status === "pending").sort((x, y) => x.at - y.at);
+      return list.length ? list.map((r) => `${r.id}: ${fmtWhen(r.at)}: ${r.text}`).join("\n") : "No upcoming reminders.";
+    },
+  };
+  TOOLS.cancel_reminder = {
+    label: "Cancel a reminder",
+    spec: {
+      description: "Cancel an upcoming reminder by its id (from list_reminders) or by words from its text.",
+      parameters: { type: "object", properties: { id: { type: "string" }, text: { type: "string" } } },
+    },
+    show: (a) => a.id || a.text || "",
+    run: (a) => {
+      const list = loadReminders();
+      const q = String(a.text || "").toLowerCase().trim();
+      const hits = list.filter((r) => r.status === "pending" && ((a.id && r.id === a.id) || (q && r.text.toLowerCase().includes(q))));
+      if (!hits.length) throw new Error("no upcoming reminder matches that");
+      if (hits.length > 1 && !a.id) throw new Error(`${hits.length} reminders match; cancel one by id: ${hits.map((r) => r.id).join(", ")}`);
+      hits[0].status = "cancelled";
+      saveReminders(list);
+      renderReminders();
+      return `Cancelled the reminder for ${fmtWhen(hits[0].at)}: "${hits[0].text}".`;
+    },
+  };
+
+  // ----- ringing -----
+  let audio = null;
+  const unlockAudio = () => {
+    try { audio ||= new (window.AudioContext || window.webkitAudioContext)(); if (audio.state === "suspended") audio.resume(); } catch {}
+  };
+  addEventListener("pointerdown", unlockAudio, { capture: true });
+  addEventListener("keydown", unlockAudio, { capture: true });
+  function chime() {
+    if (!audio) return;
+    try {
+      if (audio.state === "suspended") audio.resume();
+      const t0 = audio.currentTime + 0.05;
+      [0, 0.28, 0.56, 1.2, 1.48, 1.76].forEach((dt, i) => {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.type = "sine"; o.frequency.value = i % 3 === 2 ? 1320 : 988;
+        g.gain.setValueAtTime(0.0001, t0 + dt);
+        g.gain.exponentialRampToValueAtTime(0.25, t0 + dt + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.24);
+        o.connect(g).connect(audio.destination);
+        o.start(t0 + dt); o.stop(t0 + dt + 0.26);
+      });
+    } catch {}
+  }
+
+  const baseTitle = document.title;
+  function ring(r, quiet = false) {
+    if (els.alerts.querySelector(`[data-rid="${r.id}"]`)) return;
+    const late = (r.rangAt || Date.now()) - r.at > 120000;
+    const card = document.createElement("div");
+    card.className = "alert-card";
+    card.setAttribute("role", "alertdialog");
+    card.dataset.rid = r.id;
+    card.innerHTML = `<div class="alert-icon" aria-hidden="true">⏰</div>
+      <div class="alert-main"><div class="alert-title">Reminder</div><div class="alert-text"></div>
+      <div class="alert-time"></div>
+      <div class="alert-actions"><button type="button" class="chip-btn" data-act="snooze">Snooze 5 min</button><button type="button" class="chip-btn primary" data-act="done">Done</button></div></div>`;
+    card.querySelector(".alert-text").textContent = r.text;
+    card.querySelector(".alert-time").textContent = (late ? "Was due " : "") + fmtWhen(r.at);
+    card.onclick = (e) => {
+      const act = e.target.dataset?.act;
+      if (!act) return;
+      const list = loadReminders();
+      const it = list.find((x) => x.id === r.id);
+      if (it) {
+        if (act === "snooze") { it.at = Date.now() + 5 * 60000; it.status = "pending"; }
+        else it.status = "done";
+        saveReminders(list);
+      }
+      card.remove();
+      if (!els.alerts.children.length) document.title = baseTitle;
+      renderReminders();
+    };
+    els.alerts.appendChild(card);
+    document.title = "⏰ " + r.text;
+    if (quiet) return;
+    chime();
+    if ("Notification" in window && Notification.permission === "granted") {
+      try {
+        const n = new Notification("⏰ " + r.text, { body: "BOON reminder · " + fmtWhen(r.at), tag: r.id, requireInteraction: true });
+        n.onclick = () => { window.focus(); n.close(); };
+      } catch {}
+    }
+  }
+
+  function checkReminders() {
+    const list = loadReminders();
+    const now = Date.now();
+    const due = list.filter((r) => r.status === "pending" && r.at <= now);
+    if (!due.length) return;
+    for (const r of due) { r.status = "rang"; r.rangAt = now; }
+    saveReminders(list);   // mark first so a second BOON tab doesn't ring the same one
+    due.forEach(ring);
+    renderReminders();
+  }
+
+  function startReminderClock() {
+    let ticking = false;
+    try {
+      const src = URL.createObjectURL(new Blob(["setInterval(() => postMessage(0), 1000);"], { type: "text/javascript" }));
+      const w = new Worker(src);
+      w.onmessage = checkReminders;
+      ticking = true;
+    } catch {}
+    // Backup ticker, in case the worker can't start (it still runs at least once a minute in background tabs).
+    setInterval(checkReminders, ticking ? 15000 : 1000);
+    document.addEventListener("visibilitychange", checkReminders);
+    // Another BOON tab snoozed or finished one: drop its card here too.
+    addEventListener("storage", (e) => {
+      if (e.key !== "boon.reminders") return;
+      const list = loadReminders();
+      els.alerts.querySelectorAll("[data-rid]").forEach((card) => {
+        if (list.find((r) => r.id === card.dataset.rid)?.status !== "rang") card.remove();
+      });
+      if (!els.alerts.children.length) document.title = baseTitle;
+      renderReminders();
+    });
+    // Cards that rang but weren't answered (page reloaded or closed) come back until Done or Snooze.
+    loadReminders().filter((r) => r.status === "rang").forEach((r) => ring(r, true));
+    checkReminders();
+  }
+
+  // ----- reminders panel -----
+  function renderReminders() {
+    const list = loadReminders();
+    const upcoming = list.filter((r) => r.status === "pending").sort((a, b) => a.at - b.at);
+    els.reminderCount.textContent = upcoming.length || "";
+    els.reminderCount.hidden = !upcoming.length;
+    if (!els.reminders.open) return;
+    const perm = "Notification" in window ? Notification.permission : "unsupported";
+    els.notifyBtn.hidden = perm !== "default";
+    els.notifyNote.textContent = perm === "granted" ? "Notifications are on, so reminders also pop up outside the browser."
+      : perm === "denied" ? "Notifications are blocked for this page, so reminders ring and pop up inside BOON only. You can allow them in the browser's site settings."
+      : perm === "unsupported" ? "Reminders ring and pop up inside BOON." : "Turn on notifications so reminders also pop up outside the browser.";
+    els.reminderList.innerHTML = "";
+    if (!upcoming.length) {
+      els.reminderList.innerHTML = `<div class="list-empty">No reminders yet. Turn on the robot and say "remind me at 5 pm to study".</div>`;
+      return;
+    }
+    for (const r of upcoming) {
+      const row = document.createElement("div");
+      row.className = "reminder-row";
+      row.innerHTML = `<div><div class="reminder-text"></div><div class="reminder-when"></div></div><button type="button" class="btn" aria-label="Cancel reminder">Cancel</button>`;
+      row.querySelector(".reminder-text").textContent = r.text;
+      row.querySelector(".reminder-when").textContent = `${fmtWhen(r.at)} · ${untilText(r.at)}`;
+      row.querySelector("button").onclick = () => {
+        const all = loadReminders();
+        const it = all.find((x) => x.id === r.id);
+        if (it) { it.status = "cancelled"; saveReminders(all); }
+        renderReminders();
+      };
+      els.reminderList.appendChild(row);
+    }
+  }
+  function askNotifications() {
+    if (!("Notification" in window) || Notification.permission !== "default") return;
+    try { Promise.resolve(Notification.requestPermission()).then(renderReminders, () => {}); } catch {}
+  }
+
   const TOOL_SPECS = Object.entries(TOOLS).map(([name, t]) => ({ type: "function", function: { name, ...t.spec } }));
 
   let agentMode = false;
@@ -1342,7 +1645,7 @@ dialog input:focus { border-color: #4a4f8a; }
   function renderAgentHint() {
     const m = agentModel();
     els.hint.innerHTML = m
-      ? `Agent mode: BOON uses tools (calculator, dates) with ${escapeHtml(m.label)}${m.local ? " on this computer" : ""} and shows every step.`
+      ? `Agent mode: BOON uses tools (calculator, dates, reminders) with ${escapeHtml(m.label)}${m.local ? " on this computer" : ""} and shows every step.`
       : `Agent mode needs a model that can use tools. Run <code>ollama pull ${AGENT_DEFAULT}</code> on this computer, or add an OpenRouter key.`;
   }
 
@@ -1436,6 +1739,7 @@ dialog input:focus { border-color: #4a4f8a; }
 
   async function runAgent(text) {
     if (!text) return;
+    if (/remind|alarm|timer|notify|alert me|wake me/i.test(text)) askNotifications();
     const model = agentModel();
     if (!model) { renderAgentHint(); els.hint.scrollIntoView?.(); return; }
     const key = store.get("key", "");
@@ -1463,6 +1767,7 @@ dialog input:focus { border-color: #4a4f8a; }
 
     const messages = [{ role: "system", content: agentPrompt() }, ...past, { role: "user", content: text }];
     const started = Date.now();
+    let nudged = false;
     setBusy(true);
     controller = new AbortController();
     try {
@@ -1478,7 +1783,23 @@ dialog input:focus { border-color: #4a4f8a; }
           type: "function",
           function: { name: c.function?.name, arguments: typeof c.function?.arguments === "string" ? c.function.arguments : JSON.stringify(c.function?.arguments || {}) },
         }));
-        if (!calls.length) { m.content = content || "_Done._"; break; }
+        if (!calls.length) {
+          // Small models sometimes finish a sum in their head or claim a reminder they never set.
+          // Push back once so the answer comes from a tool.
+          const used = new Set(m.steps.filter((s) => s.type === "tool" && s.status === "done").map((s) => s.name));
+          const nudge = /\d\s*[÷\/×*+x-]\s*\d[\d,.]*\s*=\s*[$₩€£]?\s*\d/.test(content)
+            ? "You wrote arithmetic in your answer. Work it out with the calculator tool instead, then give the final answer."
+            : /remind/i.test(text) && !used.has("set_reminder") && !used.has("list_reminders") && !used.has("cancel_reminder") && /remind/i.test(content) && !/can(no|')t/i.test(content)
+              ? "You haven't set the reminder yet. Call set_reminder now with the exact time including minutes."
+              : "";
+          if (nudge && !nudged) {
+            nudged = true;
+            messages.push({ role: "assistant", content }, { role: "user", content: nudge });
+            continue;
+          }
+          m.content = content || "_Done._";
+          break;
+        }
         messages.push({ role: "assistant", content, tool_calls: calls });
         for (const call of calls) {
           const s = { type: "tool", name: call.function.name, args: parseArgs(call.function.arguments), status: "running" };
@@ -1562,10 +1883,13 @@ dialog input:focus { border-color: #4a4f8a; }
     renderAttachments();
   };
   els.openSettings.onclick = openSettings;
+  els.openReminders.onclick = () => { els.reminders.showModal(); renderReminders(); };
+  els.notifyBtn.onclick = askNotifications;
   els.menuBtn.onclick = () => els.app.classList.toggle("nav-open");
   els.scroll.addEventListener("click", () => els.app.classList.remove("nav-open"));
 
   renderGreeting();
+  startReminderClock();
   renderHint();
   renderModels();
   renderList();
