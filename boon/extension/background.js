@@ -67,14 +67,16 @@ async function endSession(reason) {
 
 // ----- the safety stop -----
 // If the lock can't open or show the work (or the question), it would only leave locked pages, so after a few
-// failures it turns focus off instead of trapping Chrome. Failures that all land within a few seconds (Chrome
-// quitting) don't count: the stop needs them spread over at least SAFETY_SPREAD_MS.
-const SAFETY_FAILS = 3, SAFETY_WINDOW_MS = 120000, SAFETY_SPREAD_MS = 10000;
+// failures it turns focus off instead of trapping Chrome. Failures within a couple of seconds of each other
+// count as one (Chrome quitting fails everything at once), and the stop needs them spread over at least
+// SAFETY_SPREAD_MS. A tab being dragged is never a failure: the drag always ends.
+const SAFETY_FAILS = 3, SAFETY_WINDOW_MS = 120000, SAFETY_SPREAD_MS = 10000, SAFETY_BURST_MS = 2000;
 let failures = [];
 async function trouble() {
   if (!cached) return;
   const now = Date.now();
   failures = failures.filter((t) => now - t < SAFETY_WINDOW_MS);
+  if (failures.length && now - failures[failures.length - 1] < SAFETY_BURST_MS) return;
   failures.push(now);
   if (failures.length >= SAFETY_FAILS && now - failures[0] >= SAFETY_SPREAD_MS) {
     failures = [];
@@ -185,10 +187,11 @@ function adoptTab(s, tabId) {
 }
 
 async function retry(fn) {
-  // A tab being dragged can't be switched; keep trying until the drag ends (up to a minute).
+  // A tab being dragged can't be switched; keep trying until the drag ends (as long as it takes while
+  // focus is on, otherwise up to a minute).
   for (let i = 0; ; i++) {
     try { return await fn(); } catch (e) {
-      if (i >= 300 || !/cannot be edited right now|dragging/i.test(String(e?.message))) throw e;
+      if ((i >= 300 && !cached) || !/cannot be edited right now|dragging/i.test(String(e?.message))) throw e;
       await new Promise((r) => setTimeout(r, 200));
     }
   }
@@ -205,10 +208,10 @@ async function openTab(url, nextTo = null) {
     const near = await getTab(nextTo);
     let tab;
     try {
-      tab = await chrome.tabs.create(near ? { url, active: true, windowId: near.windowId, openerTabId: near.id } : { url, active: true });
+      tab = await retry(() => chrome.tabs.create(near ? { url, active: true, windowId: near.windowId, openerTabId: near.id } : { url, active: true }));
     } catch {
       // No Chrome window is open (on a Mac, Chrome keeps running after the last one closes): open one.
-      try { tab = (await chrome.windows.create({ url, focused: true })).tabs[0]; } catch (e) { await trouble(); throw e; }
+      try { tab = (await retry(() => chrome.windows.create({ url, focused: true }))).tabs[0]; } catch (e) { await trouble(); throw e; }
     }
     await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
     return tab;
@@ -241,14 +244,28 @@ function reopen() {
   })().finally(() => { reopening = null; }));
 }
 
-async function bringBack() {
+// Many events can ask at once (a drag fires several); run one at a time, and once more if asked meanwhile.
+let bringing = null, bringAgain = false;
+function bringBack() {
+  if (bringing) { bringAgain = true; return bringing; }
+  return (bringing = (async () => {
+    do { bringAgain = false; await bringBackOnce(); } while (bringAgain && cached);
+  })().finally(() => { bringing = null; }));
+}
+async function bringBackOnce() {
   await reopening;
   const s = await getSession();
   if (!s) return;
   const id = s.quiz ? s.quiz.tabId : s.workTabId;
   const tab = await getTab(id);
   if (!tab) return reopen();
-  try { await retry(() => chrome.tabs.update(tab.id, { active: true })); } catch { await trouble(); return; }
+  try { await retry(() => chrome.tabs.update(tab.id, { active: true })); } catch {
+    // Closed just now: open it again. Still there but it won't show: that counts toward the safety stop.
+    if (!cached) return;
+    if (!(await getTab(tab.id))) return reopen();
+    await trouble();
+    return;
+  }
   await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
   await sweep(s);
 }
@@ -491,8 +508,9 @@ chrome.tabs.onCreated.addListener(async (tab) => {
   const s = await getSession();
   if (!s || tab.id === s.workTabId || (tab.pendingUrl || tab.url || "").startsWith(OWN)) return;
   if (s.quiz) {
-    // The question's own tab is gone (its window was closed): show the question here instead.
-    if (!(await getTab(s.quiz.tabId))) {
+    // The question's own tab is gone (its window was closed): show the question here instead. Not in an
+    // incognito tab, where Chrome won't show the add-on's pages; that one is locked and the question reopens.
+    if (!tab.incognito && !(await getTab(s.quiz.tabId))) {
       s.quiz.tabId = tab.id;
       await saveSession();
       await retry(() => chrome.tabs.update(tab.id, { url: QUIZ })).catch(() => {});
