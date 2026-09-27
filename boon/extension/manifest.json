@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "BOON Focus",
+  "version": "1.0.0",
+  "description": "Locks your tabs during a BOON focus session: School keeps you on class, email, a calculator and BOON; Hagwon keeps you on one YouTube tab.",
+  "permissions": ["tabs", "webNavigation", "storage", "alarms"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

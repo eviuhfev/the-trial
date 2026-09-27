@@ -62,7 +62,28 @@ between dates, adding days to a date, and reminders; more come later.
 **Reminders.** "Remind me at 8:52 am to study" or "remind me in 10 minutes to stretch" sets a reminder that rings at that
 exact minute: a chime, a pop-up with Snooze and Done, and a system notification if you allow them. The Reminders button
 in the sidebar lists and cancels them. They are saved in the browser and ring while BOON is open in a tab (it can be in
-the background); one that came due while BOON was closed rings the next time you open it.
+the background); one that came due while BOON was closed rings the next time you open it. The alarm keeps beeping
+until you press Snooze or Done.
+
+**School or Hagwon focus.** When a reminder is school work or marked important, its pop-up asks where you are:
+
+- **School** opens your math class in Google Classroom (paste its link in Settings) and starts a focus timer for the
+  reminder's length (at least 10 minutes). Only that class, links you open from it (Docs, Drive, attachments), email
+  (Gmail, Outlook), calculators (Desmos, calculator.net) and BOON are allowed. Anything else sends you back.
+- **Hagwon** opens a YouTube link (change it in Settings) and locks you on it for 25 minutes. Switching or opening
+  tabs sends you back.
+
+Finish stays hidden until the minimum time has passed. A web page can't lock other tabs by itself, so the locking
+needs the **BOON Focus** Chrome add-on in `boon/extension` (one-time setup):
+
+1. Open `chrome://extensions` in Chrome.
+2. Turn on **Developer mode** (top right).
+3. Click **Load unpacked** and pick the `boon/extension` folder.
+4. Reload BOON.
+
+Without the add-on, School and Hagwon still open the link and run the timer, and BOON asks you to go back if you
+return early, but it can't stop you switching tabs. The add-on only acts during a focus session and only talks to
+BOON on `localhost`.
 
 Agent mode needs a model that can call tools. Gemma 3 can't, so BOON uses Qwen3 on your computer:
 

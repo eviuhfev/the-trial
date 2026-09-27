@@ -331,6 +331,7 @@ details.think div { white-space: pre-wrap; border-left: 2px solid var(--edge); p
 .reminder-when { font-size: 13px; color: var(--ink-dim); }
 .reminder-row .btn { height: 34px; padding: 0 12px; flex: none; }
 dialog p.small { font-size: 12px; margin: 0; }
+dialog p.lock-note { font-size: 13px; margin: 12px 0 0; }
 .alert-card.important { border-color: #6a9bff; box-shadow: 0 14px 40px rgba(0,0,0,.5), 0 0 34px rgba(106,155,255,.55); }
 .alert-card.ringing .alert-icon { animation: shake .5s ease-in-out infinite; }
 @keyframes shake { 25% { transform: rotate(-14deg); } 75% { transform: rotate(14deg); } }
@@ -485,6 +486,7 @@ dialog input:focus { border-color: #4a4f8a; }
     <h2>Reminders</h2>
     <p id="notifyNote"></p>
     <button type="button" class="btn primary" id="notifyBtn" hidden>Turn on notifications</button>
+    <p class="lock-note" id="lockNote"></p>
     <div class="reminder-list" id="reminderList"></div>
     <p class="small">Reminders ring while BOON is open in a browser tab (it can be in the background). Ones due while BOON was closed ring the next time you open it.</p>
     <div class="dialog-actions"><button class="btn" value="close">Close</button></div>
@@ -503,8 +505,10 @@ dialog input:focus { border-color: #4a4f8a; }
     <input id="hfInput" type="password" autocomplete="off" placeholder="hf_..." />
     <label for="pollenInput">Pollinations key (optional backup for images)</label>
     <input id="pollenInput" type="password" autocomplete="off" placeholder="From enter.pollinations.ai" />
-    <label for="schoolInput">School work link (opens when a school reminder rings)</label>
-    <input id="schoolInput" type="url" autocomplete="off" placeholder="https://classroom.google.com" />
+    <label for="schoolInput">Math class link for School focus (copy it from Google Classroom)</label>
+    <input id="schoolInput" type="text" inputmode="url" autocomplete="off" placeholder="https://classroom.google.com/c/..." />
+    <label for="hagwonInput">Hagwon link (opens for Hagwon focus)</label>
+    <input id="hagwonInput" type="text" inputmode="url" autocomplete="off" placeholder="YouTube link" />
     <div class="dialog-actions">
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
       <button class="btn primary" value="save" id="saveSettings">Save</button>
@@ -568,7 +572,7 @@ dialog input:focus { border-color: #4a4f8a; }
     reminderList: $("reminderList"), notifyBtn: $("notifyBtn"), notifyNote: $("notifyNote"), soundHint: $("soundHint"),
     focusBar: $("focusBar"), focusText: $("focusText"), focusClock: $("focusClock"), focusBack: $("focusBack"), focusEnd: $("focusEnd"),
     focusNag: $("focusNag"), focusNagMsg: $("focusNagMsg"), focusNagClock: $("focusNagClock"), focusNagText: $("focusNagText"), focusNagBack: $("focusNagBack"), focusNagStay: $("focusNagStay"),
-    schoolInput: $("schoolInput"),
+    schoolInput: $("schoolInput"), hagwonInput: $("hagwonInput"), lockNote: $("lockNote"),
   };
 
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -1652,25 +1656,28 @@ dialog input:focus { border-color: #4a4f8a; }
     // if the user typed it; if they only named the site, BOON opens that site's front page.
     const typed = said.match(/https?:\/\/\S+|\b[\w-]+(\.[\w-]+)*\.(com|org|net|edu|io|co|kr|app|me|ai)(\/\S*)?/i)?.[0];
     let link = cleanLink(typed?.replace(/[.,;:!?'"\])}>]+$/, ""));
+    let named = !!link;
     const modelLink = cleanLink(a.link);
     if (!link && modelLink) {
       const host = siteName(modelLink).split(".");
       const label = host.length > 2 && host[0] !== "www" ? host[0] : host[host.length - 2];
       if (said.includes(modelLink.replace(/^https?:\/\//, "").replace(/\/$/, ""))) link = modelLink;
       else if (label && new RegExp(`\\b${label.replace(/[^\w-]/g, "")}\\b`, "i").test(said)) link = new URL(modelLink).origin + "/";
+      named = !!link;
     }
     const schoolLink = cleanLink(store.get("schoolLink", ""));
     if (!link) {
       const hit = SITES.find(([re]) => re.test(`${own} ${said}`));
       // Their own school's ManageBac, Canvas or class page beats the site's public front page.
       if (hit) link = schoolLink && (siteName(schoolLink) === hit[2] || siteName(schoolLink).endsWith("." + hit[2])) ? schoolLink : hit[1];
+      named = !!link;
     }
     if (!link && school) link = schoolLink || "https://classroom.google.com/";
-    let minutes = Number(a.focus_minutes);
-    if (!Number.isFinite(minutes) || minutes <= 0) {
-      minutes = TASK_FOCUS.find(([re]) => re.test(own))?.[1] || (link && SITE_FOCUS.find(([re]) => re.test(link))?.[1]) || (school ? 15 : FOCUS_MIN);
-    }
-    return { kind: school ? "school" : "important", link, focus: Math.min(180, Math.max(FOCUS_MIN, Math.round(minutes))) };
+    // The model's number or the task's, whichever is longer; then the site's; then a default.
+    const asked = Number(a.focus_minutes);
+    const minutes = Math.max(Number.isFinite(asked) && asked > 0 ? asked : 0, TASK_FOCUS.find(([re]) => re.test(own))?.[1] || 0) ||
+      (link && SITE_FOCUS.find(([re]) => re.test(link))?.[1]) || (school ? 15 : FOCUS_MIN);
+    return { kind: school ? "school" : "important", link, named, focus: Math.min(180, Math.max(FOCUS_MIN, Math.round(minutes))) };
   }
 
 
@@ -1720,15 +1727,74 @@ dialog input:focus { border-color: #4a4f8a; }
     if (it) { it.status = status; saveReminders(list); }
   }
 
-  function startFocus(r) {
+  // ----- School / Hagwon, with tab locking by the BOON Focus extension -----
+  // The extension (boon/extension, loaded unpacked in Chrome) adds data-boon-focus to this page and
+  // relays messages; without it, focus still opens the tab and runs the timer, but can't lock tabs.
+  const HAGWON_DEFAULT = "https://www.youtube.com/watch?v=UGYjHg8Xu7U&list=RDUGYjHg8Xu7U&start_radio=1";
+  const HAGWON_MINUTES = 25;
+  const hasLock = () => !!document.documentElement.dataset.boonFocus;
+  let extSeq = 0;
+  const extWaiting = new Map();
+  function ext(msg) {
+    return new Promise((resolve) => {
+      if (!hasLock()) return resolve(null);
+      const id = ++extSeq;
+      extWaiting.set(id, resolve);
+      window.postMessage({ source: "boon-page", id, msg }, "*");
+      setTimeout(() => { if (extWaiting.delete(id)) resolve(null); }, 4000);
+    });
+  }
+  addEventListener("message", (e) => {
+    if (e.source !== window || e.data?.source !== "boon-focus") return;
+    if (e.data.id) {
+      const done = extWaiting.get(e.data.id);
+      if (done) { extWaiting.delete(e.data.id); done(e.data.reply); }
+    } else if (e.data.event?.type === "ended" && loadFocus()?.locked) {
+      finishFocus(true);
+    }
+  });
+  // After a reload, pick the running lock back up (or clear a lock the extension already ended).
+  async function syncLock() {
+    if (!hasLock()) return;
+    const s = await ext({ type: "status" });
+    const f = loadFocus();
+    if (s && !f) {
+      store.set("focus", { rid: s.rid, text: s.text, link: s.url, minutes: Math.round((s.end - s.start) / 60000), start: s.start, end: s.end, minEnd: s.minEnd, locked: true, mode: s.mode });
+    } else if (!s && f?.locked) {
+      finishFocus(Date.now() >= f.end);
+    }
+    renderFocus();
+  }
+
+  function startFocusMode(r, mode) {
+    const hagwon = mode === "hagwon";
+    const url = hagwon
+      ? cleanLink(store.get("hagwonLink", "")) || HAGWON_DEFAULT
+      : (r.named && r.link) || cleanLink(store.get("schoolLink", "")) || "https://classroom.google.com/";
+    const minutes = hagwon ? HAGWON_MINUTES : r.focus;
+    const minMinutes = hagwon ? HAGWON_MINUTES : FOCUS_MIN;
+    if (!hasLock()) return startFocus({ ...r, link: url, focus: minutes }, mode, minMinutes);
+    ext({ type: "start", mode, url, minutes, minMinutes, text: r.text, rid: r.id }).then((res) => {
+      if (!res?.ok) {
+        // The extension didn't answer: run the timer unlocked; Back to work opens the tab.
+        startFocus({ ...r, link: url, focus: minutes }, mode, minMinutes, false);
+        return;
+      }
+      store.set("focus", { rid: r.id, text: r.text, link: url, minutes, start: res.start, end: res.end, minEnd: res.minEnd, locked: true, mode });
+      setReminderStatus(r.id, "focusing");
+      renderFocus();
+    });
+  }
+
+  function startFocus(r, mode = "", minMinutes = FOCUS_MIN, openNow = true) {
     if (loadFocus()) finishFocus(false);
-    if (r.link) {
+    if (r.link && openNow) {
       focusWin = window.open(r.link, "boon-focus");
       focusWinRid = r.id;
       try { focusWin?.focus(); } catch {}
     }
     const now = Date.now();
-    store.set("focus", { rid: r.id, text: r.text, link: r.link || "", minutes: r.focus, start: now, end: now + r.focus * 60000 });
+    store.set("focus", { rid: r.id, text: r.text, link: r.link || "", minutes: r.focus, start: now, end: now + r.focus * 60000, minEnd: now + minMinutes * 60000, mode });
     setReminderStatus(r.id, "focusing");
     renderFocus();
   }
@@ -1736,6 +1802,7 @@ dialog input:focus { border-color: #4a4f8a; }
   function backToWork() {
     const f = loadFocus();
     if (!f?.link) return;
+    if (f.locked) { ext({ type: "bringBack" }); els.focusNag.hidden = true; return; }
     if (!focusWin || focusWin.closed) {
       // Find the work tab by name without reloading it; only a brand-new blank tab gets the link.
       const w = window.open("", "boon-focus");
@@ -1779,8 +1846,8 @@ dialog input:focus { border-color: #4a4f8a; }
       return;
     }
     const left = f.end - Date.now();
-    const canFinish = Date.now() - f.start >= FOCUS_MIN * 60000;
-    els.focusText.textContent = f.text;
+    const canFinish = Date.now() >= (f.minEnd || f.start + FOCUS_MIN * 60000);
+    els.focusText.textContent = (f.mode === "hagwon" ? "Hagwon · " : f.mode === "school" ? "School · " : "") + f.text + (f.locked ? " 🔒" : "");
     els.focusClock.textContent = clock(left);
     els.focusBack.hidden = !f.link;
     els.focusEnd.hidden = !canFinish;
@@ -1810,7 +1877,7 @@ dialog input:focus { border-color: #4a4f8a; }
   function onFocusVisibility() {
     const f = loadFocus();
     // A ringing reminder comes first: leave its card reachable.
-    if (!f || document.visibilityState !== "visible" || !f.link || els.alerts.querySelector(".alert-card.ringing")) return;
+    if (!f || f.locked || document.visibilityState !== "visible" || !f.link || els.alerts.querySelector(".alert-card.ringing")) return;
     els.focusNagMsg.textContent = "You're back in BOON early. BOON can't see your other tabs, but it notices when you come back here.";
     els.focusNag.hidden = false;
     renderFocus();
@@ -1834,7 +1901,8 @@ dialog input:focus { border-color: #4a4f8a; }
       ? `<div class="alert-icon" aria-hidden="true">${r.kind === "school" ? "📚" : "🎯"}</div>
       <div class="alert-main"><div class="alert-title">${r.kind === "school" ? "School work" : "Important"}</div><div class="alert-text"></div>
       <div class="alert-time"></div><div class="alert-plan"></div>
-      <div class="alert-actions"><button type="button" class="chip-btn" data-act="snooze">Snooze 5 min</button><button type="button" class="chip-btn" data-act="done">Done</button><button type="button" class="chip-btn primary" data-act="focus"></button></div></div>`
+      <div class="alert-actions"><button type="button" class="chip-btn primary" data-act="school"></button><button type="button" class="chip-btn primary" data-act="hagwon"></button></div>
+      <div class="alert-actions"><button type="button" class="chip-btn" data-act="snooze">Snooze 5 min</button><button type="button" class="chip-btn" data-act="done">Done</button></div></div>`
       : `<div class="alert-icon" aria-hidden="true">⏰</div>
       <div class="alert-main"><div class="alert-title">Reminder</div><div class="alert-text"></div>
       <div class="alert-time"></div>
@@ -1842,14 +1910,19 @@ dialog input:focus { border-color: #4a4f8a; }
     card.querySelector(".alert-text").textContent = r.text;
     card.querySelector(".alert-time").textContent = (late ? "Was due " : "") + fmtWhen(r.at);
     if (focus) {
-      card.querySelector(".alert-plan").textContent = r.link
-        ? `Opens ${siteName(r.link)} and keeps you on it for ${r.focus} minutes.`
-        : `A ${r.focus}-minute focus timer.`;
-      card.querySelector('[data-act="focus"]').textContent = `Start · ${r.focus} min`;
+      card.querySelector(".alert-plan").textContent = "Where are you? School opens your class for " + r.focus +
+        " minutes; Hagwon opens your YouTube for " + HAGWON_MINUTES + " minutes." +
+        (hasLock() ? " Other tabs stay locked until the timer ends." : " Add BOON Focus to Chrome to lock other tabs (see Reminders).");
+      card.querySelector('[data-act="school"]').textContent = `🏫 School · ${r.focus} min`;
+      card.querySelector('[data-act="hagwon"]').textContent = `🎧 Hagwon · ${HAGWON_MINUTES} min`;
     }
     card.onclick = (e) => {
       const act = e.target.dataset?.act;
       if (!act) return;
+      if ((act === "school" || act === "hagwon") && loadFocus()?.locked) {
+        card.querySelector(".alert-plan").textContent = "Finish the focus that's running first, then pick this one.";
+        return;
+      }
       const list = loadReminders();
       const it = list.find((x) => x.id === r.id);
       if (it) {
@@ -1860,13 +1933,20 @@ dialog input:focus { border-color: #4a4f8a; }
       card.remove();
       syncAlarm();
       if (!els.alerts.children.length) document.title = baseTitle;
-      if (act === "focus") startFocus(it || r);
+      if (act === "school" || act === "hagwon") startFocusMode(it || r, act);
       renderReminders();
     };
     els.alerts.appendChild(card);
     document.title = "⏰ " + r.text;
     if (quiet) return;
-    startAlarm();
+    const f = loadFocus();
+    if (f?.locked && f.mode === "hagwon") {
+      // BOON is locked away during Hagwon, so a looping alarm couldn't be stopped: beep once instead.
+      card.classList.remove("ringing");
+      chime();
+    } else {
+      startAlarm();
+    }
     notify((focus ? (r.kind === "school" ? "📚 " : "🎯 ") : "⏰ ") + r.text, "BOON reminder · " + fmtWhen(r.at) + (focus ? " · open BOON to start" : ""), r.id);
   }
 
@@ -1884,6 +1964,7 @@ dialog input:focus { border-color: #4a4f8a; }
   function tick() { checkReminders(); tickFocus(); renderSoundHint(); }
 
   function startReminderClock() {
+    try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch {}
     let ticking = false;
     try {
       const src = URL.createObjectURL(new Blob(["setInterval(() => postMessage(0), 1000);"], { type: "text/javascript" }));
@@ -1918,6 +1999,7 @@ dialog input:focus { border-color: #4a4f8a; }
     checkReminders();
     tickFocus();
     renderReminders();
+    syncLock();
   }
 
   // Browsers only allow sound after a click on the page, so say so while a reminder is waiting.
@@ -1939,6 +2021,9 @@ dialog input:focus { border-color: #4a4f8a; }
     els.notifyNote.textContent = perm === "granted" ? "Notifications are on, so reminders also pop up outside the browser."
       : perm === "denied" ? "Notifications are blocked for this page, so reminders ring and pop up inside BOON only. You can allow them in the browser's site settings."
       : perm === "unsupported" ? "Reminders ring and pop up inside BOON." : "Turn on notifications so reminders also pop up outside the browser.";
+    els.lockNote.innerHTML = hasLock()
+      ? "🔒 BOON Focus is on: School and Hagwon lock your other tabs until the timer ends."
+      : "🔓 To lock tabs during School and Hagwon, add BOON Focus to Chrome once: open <code>chrome://extensions</code>, turn on <b>Developer mode</b>, click <b>Load unpacked</b> and pick the <code>boon/extension</code> folder, then reload BOON.";
     els.reminderList.innerHTML = "";
     if (!upcoming.length) {
       els.reminderList.innerHTML = `<div class="list-empty">No reminders yet. Turn on the robot and say "remind me at 5 pm to study".</div>`;
@@ -2187,6 +2272,7 @@ dialog input:focus { border-color: #4a4f8a; }
     els.hfInput.value = store.get("hf", "");
     els.pollenInput.value = store.get("pollen", "");
     els.schoolInput.value = store.get("schoolLink", "");
+    els.hagwonInput.value = store.get("hagwonLink", "") || HAGWON_DEFAULT;
     els.settings.showModal();
     (els.keyInput.value ? els.nameInput : els.keyInput).focus();
   }
@@ -2197,6 +2283,7 @@ dialog input:focus { border-color: #4a4f8a; }
     store.set("hf", els.hfInput.value.trim());
     store.set("pollen", els.pollenInput.value.trim());
     store.set("schoolLink", els.schoolInput.value.trim());
+    store.set("hagwonLink", els.hagwonInput.value.trim() === HAGWON_DEFAULT ? "" : els.hagwonInput.value.trim());
     renderGreeting();
     renderHint();
   });
@@ -2233,7 +2320,14 @@ dialog input:focus { border-color: #4a4f8a; }
   els.focusBack.onclick = backToWork;
   els.focusNagBack.onclick = backToWork;
   els.focusNagStay.onclick = () => { els.focusNag.hidden = true; };
-  els.focusEnd.onclick = () => finishFocus(true);
+  els.focusEnd.onclick = async () => {
+    const f = loadFocus();
+    if (f?.locked) {
+      const res = await ext({ type: "stop" });
+      if (res && !res.ok) return renderFocus();
+    }
+    finishFocus(true);
+  };
   els.menuBtn.onclick = () => els.app.classList.toggle("nav-open");
   els.scroll.addEventListener("click", () => els.app.classList.remove("nav-open"));
 
