@@ -888,7 +888,6 @@ dialog input:focus { border-color: #4a4f8a; }
     const key = store.get("key", "");
     if (!text && !pending.length) return;
     if (!key && !isLocal(els.modelSelect.value)) { openSettings(); return; }
-    if (isLocal(els.modelSelect.value)) stopWarm(true);   // this chat takes over Ollama, so the robot warms up again next time
 
     let chat = current();
     if (!chat) {
@@ -915,6 +914,7 @@ dialog input:focus { border-color: #4a4f8a; }
       const v = models.find((m) => m.vision && (m.local || key));
       if (v) { model = v.id; note = `switched to ${v.label} to read the image`; }
     }
+    if (isLocal(model)) stopWarm(true);   // this chat takes over Ollama, so the robot warms up again next time
 
     const bot = { role: "assistant", content: "", reasoning: "", model };
     const row = messageEl({ role: "assistant", content: "" });
@@ -1665,6 +1665,43 @@ dialog input:focus { border-color: #4a4f8a; }
     "any have has had where when which who how get give know").split(" "));
   // Lowercase words minus filler like "my" and "what's"; single letters are dropped but single digits kept.
   const noteWords = (t) => (String(t ?? "").toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).filter((w) => !NOTE_STOP.has(w) && (w.length > 1 || /\d/.test(w)));
+  const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+  // How well query word w fits note word x. 2: the same word, a longer form ("lock" → "locker", "lockers" → "locker"),
+  // or part of an unspaced Chinese/Japanese/Korean run. 1: a looser prefix of 3+ letters ("pass" → "password"). Numbers must be exact.
+  function wordMatch(w, x) {
+    if (w === x) return 2;
+    if (/^\d+$/.test(w) || /^\d+$/.test(x)) return 0;
+    if (CJK.test(w) && x.includes(w)) return 2;
+    if (w.length >= 3 && x.startsWith(w)) return 2;
+    if (x.length >= 4 && w.startsWith(x) && w.length - x.length <= 2) return 2;
+    return Math.min(w.length, x.length) >= 3 && (x.startsWith(w) || w.startsWith(x)) ? 1 : 0;
+  }
+  // Notes ranked for a query: a note counts as a match only with a clear (2) hit on some word.
+  function rankNotes(notes, query) {
+    const words = noteWords(query);
+    return notes.map((n) => {
+      const have = noteWords(noteText(n));
+      let score = 0, hits = 0;
+      for (const w of words) { const best = Math.max(0, ...have.map((x) => wordMatch(w, x))); score += best; if (best === 2) hits++; }
+      return { n, score, hits, clear: hits > 0 };
+    });
+  }
+  // A list of notes that fits in about 1,900 characters (a small model's memory): matches in full while they fit,
+  // otherwise short snippets, and a count of what didn't fit.
+  function listNotes(list, full) {
+    const BUDGET = 1900;
+    let out = "", shown = 0;
+    for (const n of list) {
+      const room = BUDGET - out.length - n.title.length - 80;
+      const body = full ? clip(noteBody(n), Math.max(80, Math.min(600, room))) : clip(noteBody(n).replace(/\s+/g, " "), 80);
+      const entry = `${out ? "\n\n" : ""}${n.id}: ${n.title}${body ? "\n" + body : ""}`;
+      if (shown && out.length + entry.length > BUDGET - 60) break;
+      out += entry;
+      shown++;
+    }
+    const more = list.length - shown;
+    return out + (more ? `\n\n(${more} more ${full ? "matches" : "notes"}; search with other words to see them)` : "");
+  }
   // The note minus its title when the title was taken from its first line (whole, or cut at 80).
   function noteBody(n) {
     const first = n.text.split("\n")[0];
@@ -1720,17 +1757,12 @@ dialog input:focus { border-color: #4a4f8a; }
     run: (a) => {
       const all = loadNotes().sort((x, y) => y.updated - x.updated);
       if (!all.length) return "No notes yet.";
-      // Matches come back in full (up to 5); a list of every note is short snippets, so it fits in a small model's memory.
-      const show = (list, full) => list.slice(0, full ? 5 : 15).map((n) => `${n.id}: ${n.title}\n${full ? clip(n.text, 600) : clip(n.text.replace(/\s+/g, " "), 120)}`).join("\n\n") +
-        (list.length > (full ? 5 : 15) ? `\n\n(${list.length - (full ? 5 : 15)} more; search with other words to see them)` : "");
-      // Any key word counts (a question like "what's my locker code" still finds "Locker: 4 12 30"); best matches first.
-      const words = noteWords(a.query);
-      if (!words.length) return show(all);
-      const hits = all.map((n) => {
-        const have = noteWords(noteText(n));
-        return { n, score: words.filter((w) => have.some((x) => x.startsWith(w) || w.startsWith(x))).length };
-      }).filter((h) => h.score).sort((x, y) => y.score - x.score).map((h) => h.n);
-      return hits.length ? show(hits, true) : `No note matched "${a.query}", so here are all ${all.length} notes:\n\n${show(all)}`;
+      // Any key word counts, so "what's my locker code" still finds "Locker: 4 12 30"; best matches first.
+      const ranked = rankNotes(all, a.query).sort((x, y) => y.score - x.score);   // a stable sort keeps newest first on ties
+      const hits = ranked.filter((h) => h.clear).map((h) => h.n);
+      if (hits.length) return listNotes(hits, true);
+      const lead = noteWords(a.query).length ? `No note clearly matched "${a.query}", so here are the notes, closest first:` : "The notes, newest first:";
+      return `${lead}\n\n${listNotes(ranked.map((h) => h.n), false)}`;
     },
   };
   TOOLS.append_to_note = {
@@ -2527,7 +2559,9 @@ dialog input:focus { border-color: #4a4f8a; }
   let agentWarm = { model: "", at: 0 }, warmCtl = null, warming = false;
   function warmAgent() {
     const model = agentModel();
-    if (!model?.local || controller || warmCtl || (agentWarm.model === model.id && Date.now() - agentWarm.at < WARM_MS)) return;
+    if (!model?.local || controller) return;
+    if (warmCtl && agentWarm.model !== model.id) stopWarm(false);   // the picker changed while another model was warming up
+    if (warmCtl || (agentWarm.model === model.id && Date.now() - agentWarm.at < WARM_MS)) return;
     const warm = agentWarm = { model: model.id, at: Date.now() };
     const ctl = warmCtl = new AbortController();
     const slow = setTimeout(() => { warming = true; if (agentMode) renderHint(); }, 1500);
@@ -2572,7 +2606,7 @@ dialog input:focus { border-color: #4a4f8a; }
         // Qwen3 thinks for ~40 s per step on a laptop; with thinking off it picks tools in ~2 s.
         body: JSON.stringify({
           model: local ? model.slice(LOCAL.length) : model, messages, tools: TOOL_SPECS, stream: false,
-          ...(local ? { reasoning_effort: "none" } : {}),
+          ...(local ? { reasoning_effort: "none", max_tokens: REPLY_TOKENS } : {}),
         }),
       });
     } catch (err) {
@@ -2594,16 +2628,43 @@ dialog input:focus { border-color: #4a4f8a; }
     return msg;
   }
 
-  // Budgets for a local model's 4,096-token window (about 4 characters a token).
-  const TOOL_RESULT_MAX = 2000, PAST_MAX = 3000, PAST_TURNS = 6, PAST_EACH = 800;
+  // A local model's 4,096-token window holds the instructions and tools (~2,300 tokens, which Ollama keeps cached),
+  // earlier turns, this task's steps and the reply. Going over makes Ollama drop the cached part (slow again) or the task.
+  // Rough count, checked against the Qwen3 tokenizer and on the high side for English: a token per digit and per
+  // Chinese/Japanese/Korean character, 1.5 per other non-English character (accents, emoji), 3.2 other characters a token.
+  const LOCAL_CTX = 4096, REPLY_TOKENS = 600, PAST_TOKENS = 700, PAST_TURNS = 6, TOOL_RESULT_MAX = 2000;
+  const estTokens = (t) => {
+    let k = 0, r = 0;
+    for (const ch of String(t ?? "")) {
+      if ((ch >= "0" && ch <= "9") || CJK.test(ch)) k++;
+      else if (ch.codePointAt(0) > 127) k += 1.5;
+      else r++;
+    }
+    return Math.ceil(k + r / 3.2) + 4;
+  };
+  // Cut text to about `max` tokens by that count, marking the cut with "…".
+  function clipTokens(t, max) {
+    const s = String(t ?? "");
+    if (estTokens(s) <= max) return s;
+    let len = Math.floor(s.length * max / estTokens(s));
+    while (len > 0 && estTokens(s.slice(0, len)) + 2 > max) len = Math.floor(len * 0.9);
+    return s.slice(0, len) + "…";
+  }
+  const msgTokens = (m) => estTokens(textOf(m.content || "")) + (m.tool_calls ? estTokens(JSON.stringify(m.tool_calls)) : 0);
+  // The instructions and tool list: counted by the Qwen3 tokenizer at about 3.9 characters a token.
+  const prefixTokens = () => Math.ceil((agentPrompt().length + JSON.stringify(TOOL_SPECS).length) / 3.9) + 80;
+  const roomLeft = (messages) => LOCAL_CTX - REPLY_TOKENS - prefixTokens() - messages.slice(1).reduce((n, m) => n + msgTokens(m), 0);
+  // The last few turns, newest first until PAST_TOKENS is used; the latest answer may run longer (follow-ups point at it).
   function recentTurns(past) {
     const out = [];
     let used = 0;
     for (let i = past.length - 1; i >= 0 && out.length < PAST_TURNS; i--) {
-      const text = clip(textOf(past[i].content), PAST_EACH);   // pictures in older turns are left out
+      let text = clip(textOf(past[i].content), out.length ? 800 : 1500);   // pictures in older turns are left out
       if (!text) continue;
-      if (used + text.length > PAST_MAX) break;
-      used += text.length;
+      if (!out.length) text = clipTokens(text, PAST_TOKENS);
+      const cost = estTokens(text);
+      if (used + cost > PAST_TOKENS) break;
+      used += cost;
       out.unshift({ role: past[i].role, content: text });
     }
     return out;
@@ -2647,6 +2708,7 @@ dialog input:focus { border-color: #4a4f8a; }
     renderList();
 
     const messages = [{ role: "system", content: agentPrompt() }, ...past, { role: "user", content: withToday(text) }];
+    let pastLeft = past.length;
     const started = Date.now();
     let nudged = false;
     setBusy(true);
@@ -2654,6 +2716,8 @@ dialog input:focus { border-color: #4a4f8a; }
     try {
       for (let step = 1; ; step++) {
         if (step > AGENT_MAX_STEPS) { m.error = `Stopped after ${AGENT_MAX_STEPS} steps so it doesn't run forever. Try a smaller task.`; break; }
+        // Out of room: let go of the oldest earlier turns (they sit right after the cached instructions and tools).
+        while (model.local && pastLeft > 0 && roomLeft(messages) < 0) { messages.splice(1, 1); pastLeft--; }
         const reply = await callModel(model.id, messages, key);
         let content = typeof reply.content === "string" ? reply.content : "";
         let thought = reply.reasoning || reply.reasoning_content || reply.thinking || "";
@@ -2677,14 +2741,24 @@ dialog input:focus { border-color: #4a4f8a; }
           const triedSave = m.steps.some((s) => s.type === "tool" && /^(save_note|append_to_note|add_todo)$/.test(s.name));
           const claimsSaved = /^\s*(saved|added|noted|done)\b|\b((i'?ve|i have|i) (saved|added|noted|jotted)|(saved|added) (it |that |this )?(to|in|as) (a |your |the )?(notes?|to[- ]?dos?|list)|(note|to-?do) (is |has been |was )?(saved|added|created))\b/i;
           const refused = /can(no|[’']|)t|unable|couldn/i.test(content);
-          // And a question about something the user may have saved ("what's my locker code?") answered without looking.
-          const asksRecall = /^\s*(what|where|when|which|who)\b[^?.!]*\bmy\b|\b(do you (know|remember)|remind me (what|of)|what did i (save|say|note|write)|tell me my)\b/i.test(text) ||
-            (/\bmy\b/i.test(text) && /\b(don'?t|do not) (have|know)\b[^.]*\b(access|your)\b|\bcan'?t access\b|\bno access to\b/i.test(content));
+          // "That's already saved" after a lookup that found something is true, not a fake claim.
+          const looked = (re) => m.steps.some((s) => s.type === "tool" && s.status === "done" && re.test(s.name) &&
+            !/^(No notes yet\.|The to-do list is empty\.|No upcoming reminders\.)/.test(s.result || ""));
+          const already = /\b(already|exists?)\b/i.test(content);
+          // And a question about something the user may have saved ("what's my locker code?") answered without looking:
+          // only when it's about notes, to-dos or reminders, or about a saved note (half its key words are in one), and not a request to make one.
+          const makes = wantsSave || wantsReminder || /\b(save|add|put|keep|store|jot|set|schedule)\b|\bremind me (to|at|in|on|tomorrow|tonight)\b|\bwake me\b/i.test(text);
+          const qWords = noteWords(text);
+          const aboutSaved = /\b(notes?|to[- ]?dos?|tasks?|reminders?|saved|list)\b/i.test(text) ||
+            (qWords.length > 0 && rankNotes(loadNotes(), text).some((h) => h.hits * 2 >= qWords.length));   // half its words are in one note
+          const recallAsk = /^\s*(what|where|when|which|who)(['’]?s)?\b[^?.!]*\bmy\b|\b(do you (know|remember)|tell me) (my|what i|where i|when i)\b|\bremind me (what|of)\b|\bwhat did i (save|say|note|write)\b/i.test(text);
+          const noAccess = /\b(don['’]?t|do not) (have|know)\b[^.]*\b(access|your|that)\b|\b(can['’]?t|cannot|unable to|not able to) access\b|\bno access to\b/i.test(content);
+          const asksRecall = !makes && ((recallAsk && aboutSaved) || (/\bmy\b/i.test(text) && noAccess));
           const nudge = /\d\s*[÷\/×*+x-]\s*\d[\d,.]*\s*=\s*[$₩€£]?\s*\d/.test(content)
             ? "You wrote arithmetic in your answer. Work it out with the calculator tool instead, then give the final answer."
-            : wantsReminder && !triedReminder && !content.includes("?") && claimsReminder.test(content) && !refused
+            : wantsReminder && !triedReminder && !(already && looked(/^list_reminders$/)) && !content.includes("?") && claimsReminder.test(content) && !refused
               ? "You haven't set the reminder yet. Call set_reminder now with the exact time including minutes."
-              : wantsSave && !triedSave && !content.includes("?") && claimsSaved.test(content) && !refused
+              : wantsSave && !triedSave && !(already && looked(/^(find_notes|list_todos)$/)) && !content.includes("?") && claimsSaved.test(content) && !refused
                 ? "You haven't saved it yet. Call save_note (for a note) or add_todo (for a to-do) now."
                 : asksRecall && !m.steps.some((s) => s.type === "tool")
                   ? "Before answering, look it up: call find_notes with a few key words (e.g. \"locker code\"), or list_todos or list_reminders if it's about tasks or reminders."
@@ -2729,7 +2803,7 @@ dialog input:focus { border-color: #4a4f8a; }
           messages.push({ role: "tool", tool_call_id: call.id, content:
             s.status === "error" ? "Error: " + s.result
             : s.status === "denied" ? "The user pressed Deny, so this was NOT done. Tell them it wasn't done, and don't try it again."
-            : model.local ? clip(s.result, TOOL_RESULT_MAX) : s.result });
+            : model.local ? clipTokens(clip(s.result, TOOL_RESULT_MAX), Math.max(100, roomLeft(messages) - 60)) : s.result });
         }
         touch(m);
         rerenderAgent(m);
