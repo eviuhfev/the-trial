@@ -336,7 +336,7 @@ dialog p.small { font-size: 12px; margin: 0; }
 @keyframes shake { 25% { transform: rotate(-14deg); } 75% { transform: rotate(14deg); } }
 .alert-plan { font-size: 13px; color: #b9c8ff; margin-top: 6px; }
 .sound-hint { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 49; border: 1px solid #5a4a2a; background: #2a2416; color: #ffd98a; border-radius: 16px; padding: 8px 14px; font-size: 13px; max-width: calc(100vw - 32px); }
-.sound-hint[hidden], .focus-bar[hidden], .focus-nag[hidden] { display: none; }
+.sound-hint[hidden], .focus-bar[hidden], .focus-nag[hidden], .focus-bar [hidden], .focus-nag [hidden] { display: none; }
 .focus-bar {
   position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 45;
   display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px);
@@ -1640,7 +1640,16 @@ dialog input:focus { border-color: #4a4f8a; }
     const school = SCHOOL_WORDS.test(words);
     const important = a.important === true || a.important === "true" || school || IMPORTANT_WORDS.test(words);
     if (!important) return null;
-    let link = cleanLink(a.link);
+    // Use the model's link only when the user named that site; otherwise pick from the user's words.
+    const said = String(task || text);
+    const named = said.match(/https?:\/\/\S+|\b[\w-]+(\.[\w-]+)*\.(com|org|net|edu|io|co|kr|app|me|ai)(\/\S*)?/i)?.[0];
+    let link = cleanLink(named);
+    const modelLink = cleanLink(a.link);
+    if (!link && modelLink) {
+      const host = siteName(modelLink).split(".");
+      const label = host.length > 2 && host[0] !== "www" ? host[0] : host[host.length - 2];
+      if (label && new RegExp(`\\b${label.replace(/[^\w-]/g, "")}\\b`, "i").test(said)) link = modelLink;
+    }
     if (!link) link = SITES.find(([re]) => re.test(words))?.[1] || "";
     if (!link && school) link = cleanLink(store.get("schoolLink", "")) || "https://classroom.google.com/";
     let minutes = Number(a.focus_minutes);
