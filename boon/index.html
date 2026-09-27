@@ -338,6 +338,7 @@ dialog p.lock-note { font-size: 13px; margin: 12px 0 0; }
 .alert-plan { font-size: 13px; color: #b9c8ff; margin-top: 6px; }
 .sound-hint { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 49; border: 1px solid #5a4a2a; background: #2a2416; color: #ffd98a; border-radius: 16px; padding: 8px 14px; font-size: 13px; max-width: calc(100vw - 32px); }
 .sound-hint[hidden], .focus-bar[hidden], .focus-nag[hidden], .focus-bar [hidden], .focus-nag [hidden] { display: none; }
+#quizLock { z-index: 80; }
 .focus-bar {
   position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 45;
   display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px);
@@ -472,6 +473,14 @@ dialog input:focus { border-color: #4a4f8a; }
   <button type="button" class="chip-btn primary" id="focusBack">Back to work</button>
   <button type="button" class="chip-btn" id="focusEnd" hidden>Finish</button>
 </div>
+<div class="focus-nag" id="quizLock" hidden role="alertdialog" aria-labelledby="quizLockTitle">
+  <div class="focus-nag-card">
+    <div class="focus-nag-clock" aria-hidden="true">🧮</div>
+    <div class="focus-nag-title" id="quizLockTitle">Answer the algebra question first</div>
+    <p>BOON is locked while the turn-off question is open. Go back to its tab to answer it.</p>
+    <div class="alert-actions"><button type="button" class="chip-btn primary" id="quizLockBack">Go to the question</button></div>
+  </div>
+</div>
 <div class="focus-nag" id="focusNag" hidden role="alertdialog" aria-labelledby="focusNagText">
   <div class="focus-nag-card">
     <div class="focus-nag-clock" id="focusNagClock"></div>
@@ -572,6 +581,7 @@ dialog input:focus { border-color: #4a4f8a; }
     reminderList: $("reminderList"), notifyBtn: $("notifyBtn"), notifyNote: $("notifyNote"), soundHint: $("soundHint"),
     focusBar: $("focusBar"), focusText: $("focusText"), focusClock: $("focusClock"), focusBack: $("focusBack"), focusEnd: $("focusEnd"),
     focusNag: $("focusNag"), focusNagMsg: $("focusNagMsg"), focusNagClock: $("focusNagClock"), focusNagText: $("focusNagText"), focusNagBack: $("focusNagBack"), focusNagStay: $("focusNagStay"),
+    quizLock: $("quizLock"), quizLockBack: $("quizLockBack"),
     schoolInput: $("schoolInput"), hagwonInput: $("hagwonInput"), lockNote: $("lockNote"),
   };
 
@@ -1733,6 +1743,7 @@ dialog input:focus { border-color: #4a4f8a; }
   const HAGWON_DEFAULT = "https://www.youtube.com/watch?v=UGYjHg8Xu7U&list=RDUGYjHg8Xu7U&start_radio=1";
   const HAGWON_MINUTES = 25;
   const hasLock = () => !!document.documentElement.dataset.boonFocus;
+  const LOCK_VERSION = "1.1.0";   // boon/extension/manifest.json
   let extSeq = 0;
   const extWaiting = new Map();
   function ext(msg) {
@@ -1749,15 +1760,20 @@ dialog input:focus { border-color: #4a4f8a; }
     if (e.data.id) {
       const done = extWaiting.get(e.data.id);
       if (done) { extWaiting.delete(e.data.id); done(e.data.reply); }
-    } else if (e.data.event?.type === "ended" && loadFocus()?.locked) {
-      finishFocus(true);
+    } else if (e.data.event?.type === "ended") {
+      els.quizLock.hidden = true;
+      if (loadFocus()?.locked) finishFocus(true, e.data.event.reason);
+    } else if (e.data.event?.type === "quiz") {
+      els.quizLock.hidden = !e.data.event.on;
     }
   });
   // After a reload, pick the running lock back up (or clear a lock the extension already ended).
   async function syncLock() {
     if (!hasLock()) return;
-    const s = await ext({ type: "status" });
-    const f = loadFocus();
+    const res = await ext({ type: "status" });
+    if (!res) return;   // no answer: leave things as they are
+    const s = "session" in res ? res.session : res, f = loadFocus();   // add-on 1.0 sent the session itself
+    els.quizLock.hidden = !s?.quiz;
     if (s && !f) {
       store.set("focus", { rid: s.rid, text: s.text, link: s.url, minutes: Math.round((s.end - s.start) / 60000), start: s.start, end: s.end, minEnd: s.minEnd, locked: true, mode: s.mode });
     } else if (!s && f?.locked) {
@@ -1768,13 +1784,17 @@ dialog input:focus { border-color: #4a4f8a; }
 
   function startFocusMode(r, mode) {
     const hagwon = mode === "hagwon";
+    // A site named in the reminder wins, except a Classroom link when Settings has the math class link.
+    const school = cleanLink(store.get("schoolLink", ""));
+    const named = r.named !== false && r.link;
     const url = hagwon
       ? cleanLink(store.get("hagwonLink", "")) || HAGWON_DEFAULT
-      : (r.named && r.link) || cleanLink(store.get("schoolLink", "")) || "https://classroom.google.com/";
+      : (named && !(school && siteName(named) === siteName(school)) && named) || school || "https://classroom.google.com/";
     const minutes = hagwon ? HAGWON_MINUTES : r.focus;
     const minMinutes = hagwon ? HAGWON_MINUTES : FOCUS_MIN;
     if (!hasLock()) return startFocus({ ...r, link: url, focus: minutes }, mode, minMinutes);
     ext({ type: "start", mode, url, minutes, minMinutes, text: r.text, rid: r.id }).then((res) => {
+      if (res?.running) return syncLock();   // another BOON tab already started one
       if (!res?.ok) {
         // The extension didn't answer: run the timer unlocked; Back to work opens the tab.
         startFocus({ ...r, link: url, focus: minutes }, mode, minMinutes, false);
@@ -1782,8 +1802,14 @@ dialog input:focus { border-color: #4a4f8a; }
       }
       store.set("focus", { rid: r.id, text: r.text, link: url, minutes, start: res.start, end: res.end, minEnd: res.minEnd, locked: true, mode });
       setReminderStatus(r.id, "focusing");
+      quietAlerts();
       renderFocus();
     });
+  }
+  // Starting a locked focus quiets any other ringing reminder; its card stays up.
+  function quietAlerts() {
+    els.alerts.querySelectorAll(".alert-card.ringing").forEach((c) => c.classList.remove("ringing"));
+    stopAlarm();
   }
 
   function startFocus(r, mode = "", minMinutes = FOCUS_MIN, openNow = true) {
@@ -1814,7 +1840,7 @@ dialog input:focus { border-color: #4a4f8a; }
     els.focusNag.hidden = true;
   }
 
-  function finishFocus(completed) {
+  function finishFocus(completed, reason = "") {
     const f = loadFocus();
     if (!f) return;
     store.set("focus", null);
@@ -1826,11 +1852,13 @@ dialog input:focus { border-color: #4a4f8a; }
     const mins = Math.round((Math.min(Date.now(), f.end) - f.start) / 60000);
     const card = document.createElement("div");
     card.className = "alert-card";
-    card.innerHTML = `<div class="alert-icon" aria-hidden="true">🎉</div><div class="alert-main"><div class="alert-title">Focus done</div>
+    card.innerHTML = `<div class="alert-icon" aria-hidden="true">🎉</div><div class="alert-main"><div class="alert-title">${reason === "quiz" ? "Focus off" : "Focus done"}</div>
       <div class="alert-text"></div><div class="alert-time"></div>
       <div class="alert-actions"><button type="button" class="chip-btn primary" data-act="close">Nice</button></div></div>`;
     card.querySelector(".alert-text").textContent = f.text;
-    card.querySelector(".alert-time").textContent = `${mins} minute${mins === 1 ? "" : "s"} of focus. You can take a break.`;
+    card.querySelector(".alert-time").textContent = reason === "quiz"
+      ? `You solved the question after ${mins} minute${mins === 1 ? "" : "s"} of focus.`
+      : `${mins} minute${mins === 1 ? "" : "s"} of focus. You can take a break.`;
     card.onclick = (e) => { if (e.target.dataset?.act) { card.remove(); if (!els.alerts.children.length) document.title = baseTitle; } };
     els.alerts.appendChild(card);
     chime();
@@ -1850,7 +1878,9 @@ dialog input:focus { border-color: #4a4f8a; }
     els.focusText.textContent = (f.mode === "hagwon" ? "Hagwon · " : f.mode === "school" ? "School · " : "") + f.text + (f.locked ? " 🔒" : "");
     els.focusClock.textContent = clock(left);
     els.focusBack.hidden = !f.link;
-    els.focusEnd.hidden = !canFinish;
+    // A locked session can be turned off any time, by answering the algebra question.
+    els.focusEnd.hidden = !canFinish && !f.locked;
+    els.focusEnd.textContent = f.locked ? "Turn off" : "Finish";
     els.focusNagClock.textContent = clock(left);
     els.focusNagText.textContent = f.text;
     els.focusNagBack.hidden = !f.link;
@@ -1912,7 +1942,7 @@ dialog input:focus { border-color: #4a4f8a; }
     if (focus) {
       card.querySelector(".alert-plan").textContent = "Where are you? School opens your class for " + r.focus +
         " minutes; Hagwon opens your YouTube for " + HAGWON_MINUTES + " minutes." +
-        (hasLock() ? " Other tabs stay locked until the timer ends." : " Add BOON Focus to Chrome to lock other tabs (see Reminders).");
+        (hasLock() ? " Other tabs stay locked until the timer ends, or until you solve the turn-off question." : " Add BOON Focus to Chrome to lock other tabs (see Reminders).");
       card.querySelector('[data-act="school"]').textContent = `🏫 School · ${r.focus} min`;
       card.querySelector('[data-act="hagwon"]').textContent = `🎧 Hagwon · ${HAGWON_MINUTES} min`;
     }
@@ -1921,6 +1951,8 @@ dialog input:focus { border-color: #4a4f8a; }
       if (!act) return;
       if ((act === "school" || act === "hagwon") && loadFocus()?.locked) {
         card.querySelector(".alert-plan").textContent = "Finish the focus that's running first, then pick this one.";
+        card.classList.remove("ringing");
+        syncAlarm();
         return;
       }
       const list = loadReminders();
@@ -1941,7 +1973,7 @@ dialog input:focus { border-color: #4a4f8a; }
     if (quiet) return;
     const f = loadFocus();
     if (f?.locked && f.mode === "hagwon") {
-      // BOON is locked away during Hagwon, so a looping alarm couldn't be stopped: beep once instead.
+      // Hagwon plays music, so a looping alarm on top of it would be too much: beep once instead.
       card.classList.remove("ringing");
       chime();
     } else {
@@ -2021,8 +2053,10 @@ dialog input:focus { border-color: #4a4f8a; }
     els.notifyNote.textContent = perm === "granted" ? "Notifications are on, so reminders also pop up outside the browser."
       : perm === "denied" ? "Notifications are blocked for this page, so reminders ring and pop up inside BOON only. You can allow them in the browser's site settings."
       : perm === "unsupported" ? "Reminders ring and pop up inside BOON." : "Turn on notifications so reminders also pop up outside the browser.";
-    els.lockNote.innerHTML = hasLock()
-      ? "🔒 BOON Focus is on: School and Hagwon lock your other tabs until the timer ends."
+    els.lockNote.innerHTML = hasLock() && document.documentElement.dataset.boonFocus !== LOCK_VERSION
+      ? "🔄 BOON Focus has an update: open <code>chrome://extensions</code>, click the reload arrow on BOON Focus, then reload BOON."
+      : hasLock()
+      ? "🔒 BOON Focus is on: School and Hagwon lock your other tabs until the timer ends, and the island shows the time left."
       : "🔓 To lock tabs during School and Hagwon, add BOON Focus to Chrome once: open <code>chrome://extensions</code>, turn on <b>Developer mode</b>, click <b>Load unpacked</b> and pick the <code>boon/extension</code> folder, then reload BOON.";
     els.reminderList.innerHTML = "";
     if (!upcoming.length) {
@@ -2323,11 +2357,14 @@ dialog input:focus { border-color: #4a4f8a; }
   els.focusEnd.onclick = async () => {
     const f = loadFocus();
     if (f?.locked) {
-      const res = await ext({ type: "stop" });
-      if (res && !res.ok) return renderFocus();
+      if (!confirm("Turning off early gives you a hard algebra question. You have 5 minutes and 3 tries, and every other tab (BOON too) stays locked until you finish. Start the question?")) return;
+      const res = await ext({ type: "turnOff" });
+      if (res?.over) finishFocus(true);
+      return;
     }
     finishFocus(true);
   };
+  els.quizLockBack.onclick = () => ext({ type: "bringBack" });
   els.menuBtn.onclick = () => els.app.classList.toggle("nav-open");
   els.scroll.addEventListener("click", () => els.app.classList.remove("nav-open"));
 

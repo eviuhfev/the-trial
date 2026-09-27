@@ -68,22 +68,32 @@ until you press Snooze or Done.
 **School or Hagwon focus.** When a reminder is school work or marked important, its pop-up asks where you are:
 
 - **School** opens your math class in Google Classroom (paste its link in Settings) and starts a focus timer for the
-  reminder's length (at least 10 minutes). Only that class, links you open from it (Docs, Drive, attachments), email
-  (Gmail, Outlook), calculators (Desmos, calculator.net) and BOON are allowed. Anything else sends you back.
-- **Hagwon** opens a YouTube link (change it in Settings) and locks you on it for 25 minutes. Switching or opening
-  tabs sends you back.
+  reminder's length (at least 10 minutes). Only that class, pages you open from it (Docs, Drive, attachments, and
+  links from the class, which then stay on their own site), email (Gmail, Outlook), calculators (Desmos,
+  calculator.net) and BOON are allowed.
+- **Hagwon** opens a YouTube mix (change it in Settings) for 25 minutes. YouTube stays on that mix: no Shorts, no
+  other videos, no home page. A calculator and BOON are also allowed.
 
-Finish stays hidden until the minimum time has passed. A web page can't lock other tabs by itself, so the locking
-needs the **BOON Focus** Chrome add-on in `boon/extension` (one-time setup):
+Anything else sends you back, and `chrome://` pages (like the extensions page) are blocked during focus.
+
+**The island.** A small floating pill at the top of every page shows the time left, and you can drag it anywhere.
+Its **Turn off** button (or Turn off in BOON's focus bar) ends focus early, but only after you solve a hard
+Algebra 1-2 question: 5 minutes, 3 tries, and every other tab (BOON included) is locked while it's open. Solve it
+and focus is off; miss it and focus keeps going, and you can try again later for a new question. The questions are
+made by code from their answers (quadratics, systems, exponents, logs, radicals, absolute value, vertex form,
+sequences, the remainder theorem, complex numbers), so the answer is always exact and no AI is involved.
+
+The locking and the island need the **BOON Focus** Chrome add-on in `boon/extension` (one-time setup):
 
 1. Open `chrome://extensions` in Chrome.
 2. Turn on **Developer mode** (top right).
 3. Click **Load unpacked** and pick the `boon/extension` folder.
 4. Reload BOON.
 
+After pulling a new version of BOON, click the reload arrow on the BOON Focus card in `chrome://extensions`.
 Without the add-on, School and Hagwon still open the link and run the timer, and BOON asks you to go back if you
-return early, but it can't stop you switching tabs. The add-on only acts during a focus session and only talks to
-BOON on `localhost`.
+return early, but it can't stop you switching tabs. The add-on only acts during a focus session. It works inside
+Chrome only: other Mac apps (like Calculator) are never blocked.
 
 Agent mode needs a model that can call tools. Gemma 3 can't, so BOON uses Qwen3 on your computer:
 
