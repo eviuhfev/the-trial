@@ -341,9 +341,13 @@ dialog h3 { margin: 16px 0 0; font-size: 15px; color: var(--ink-dim); }
 .todo-row > div { flex: 1; min-width: 0; }
 .todo-row.done .reminder-text { text-decoration: line-through; color: var(--ink-faint); font-weight: 500; }
 .reminder-when.late { color: var(--danger); }
+.sidebar { overflow-y: auto; }   /* the Notes button can push Settings below a landscape phone's screen */
 .note-row > div { flex: 1; min-width: 0; }
 #notes .reminder-list { max-height: 32vh; margin: 8px 0; }
-.note-body { font-size: 13px; color: var(--ink-dim); white-space: pre-wrap; word-break: break-word; max-height: 4.2em; overflow: hidden; }
+.note-body { font-size: 13px; line-height: 1.4; color: var(--ink-dim); white-space: pre-wrap; word-break: break-word; max-height: 4.2em; overflow: hidden; }
+.note-body.open { max-height: none; }
+.note-row > div { cursor: pointer; }
+.todo-row input:focus-visible { outline: 2px solid #6a9bff; outline-offset: 2px; }
 dialog p.small { font-size: 12px; margin: 0; }
 dialog p.lock-note { font-size: 13px; margin: 12px 0 0; }
 .alert-card.important { border-color: #6a9bff; box-shadow: 0 14px 40px rgba(0,0,0,.5), 0 0 34px rgba(106,155,255,.55); }
@@ -1643,8 +1647,14 @@ dialog input:focus { border-color: #4a4f8a; }
   const newId = (prefix, list) => { let id; do id = prefix + uid().slice(-5); while (list.some((x) => x.id === id)); return id; };
   const clip = (t, n) => (t.length > n ? t.slice(0, n) + "…" : t);
   const noteText = (n) => `${n.title}\n${n.text}`;
+  const noteTitle = (n) => n.title;
+  // The note minus its title when the title was taken from its first line (whole, or cut at 80).
+  function noteBody(n) {
+    const first = n.text.split("\n")[0];
+    return (first === n.title || (n.title.length === 80 && first.startsWith(n.title)) ? n.text.slice(n.title.length) : n.text).trim();
+  }
   // One item by id, or by words from it (an exact match wins); several matches ask for the id.
-  function pick(list, a, what, textOf) {
+  function pick(list, a, what, textOf, exactOf = textOf) {
     const id = String(a.id || "").trim();
     if (id) {
       const hit = list.find((x) => x.id === id);
@@ -1654,7 +1664,7 @@ dialog input:focus { border-color: #4a4f8a; }
     const q = String(a.text || "").toLowerCase().trim();
     if (!q) throw new Error(`say which ${what}: its id or words from it`);
     const hits = list.filter((x) => textOf(x).toLowerCase().includes(q));
-    const exact = hits.filter((x) => textOf(x).toLowerCase().trim() === q);
+    const exact = hits.filter((x) => exactOf(x).toLowerCase().trim() === q);
     if (exact.length === 1) return exact[0];
     if (!hits.length) throw new Error(`no ${what} matches "${a.text}"`);
     if (hits.length > 1) throw new Error(`${hits.length} ${what}s match; pick one by id: ${hits.map((x) => `${x.id} (${clip(x.title || x.text, 30)})`).join(", ")}`);
@@ -1711,7 +1721,7 @@ dialog input:focus { border-color: #4a4f8a; }
       const add = String(a.text || "").trim();
       if (!add) throw new Error("nothing to add");
       const list = loadNotes();
-      const n = pick(list, { id: a.id, text: a.title }, "note", noteText);
+      const n = pick(list, { id: a.id, text: a.title }, "note", noteText, noteTitle);
       n.text = (n.text + "\n" + add).slice(0, 10000);
       n.updated = Date.now();
       saveNotes(list);
@@ -1725,10 +1735,14 @@ dialog input:focus { border-color: #4a4f8a; }
       parameters: { type: "object", properties: { id: { type: "string" }, text: { type: "string", description: "Words from the note, if no id" } } },
     },
     show: (a) => a.id || a.text || "",
-    ask: (a) => { const n = pick(loadNotes(), a, "note", noteText); return { q: `Delete the note "${n.title}"?`, id: n.id }; },
+    ask: (a) => {
+      const n = pick(loadNotes(), a, "note", noteText, noteTitle);
+      const body = noteBody(n).replace(/\s+/g, " ");
+      return { q: `Delete the note "${n.title}"${body ? ` (${clip(body, 60)})` : ""}, last changed ${new Date(n.updated).toLocaleDateString()}?`, id: n.id };
+    },
     run: (a) => {
       const list = loadNotes();
-      const n = pick(list, a, "note", noteText);
+      const n = pick(list, a, "note", noteText, noteTitle);
       saveNotes(list.filter((x) => x !== n));
       return `Deleted the note "${n.title}".`;
     },
@@ -1738,18 +1752,21 @@ dialog input:focus { border-color: #4a4f8a; }
   const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   function dueDay(v) {
     const t = String(v ?? "").trim().toLowerCase();
-    if (!t) return "";
+    if (!t || /^(none|null|undefined|n\/?a|no|false|-)$/.test(t)) return "";
     const now = new Date();
     const wd = WEEKDAYS.indexOf(t);
     const d = t === "today" ? now
       : t === "tomorrow" ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
       : wd >= 0 ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + ((wd - now.getDay() + 7) % 7))
       : parseDay(t);
+    if (d.getFullYear() < 2000 || d.getFullYear() > 2200) throw new Error(`${v} isn't a usable due date`);
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   }
   function dueText(ymd) {
     if (!ymd) return "";
-    const d = parseDay(ymd), now = new Date();
+    let d;
+    try { d = parseDay(ymd); } catch { return `due ${ymd}`; }
+    const now = new Date();
     const days = Math.round((d - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
     const day = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
     return days === 0 ? "due today" : days === 1 ? "due tomorrow" : days < 0 ? `overdue (was due ${day})` : `due ${day}`;
@@ -1772,9 +1789,10 @@ dialog input:focus { border-color: #4a4f8a; }
       const due = dueDay(a.due);
       const list = loadTodos();
       const t = { id: newId("t", list), text, due, done: false, created: Date.now() };
+      const said = `Added to-do ${t.id}: "${text}"${due ? `, ${dueText(due)}` : ""}.`;
       list.push(t);
       saveTodos(list);
-      return `Added to-do ${t.id}: "${text}"${due ? `, ${dueText(due)}` : ""}.`;
+      return said;
     },
   };
   TOOLS.list_todos = {
@@ -2330,10 +2348,12 @@ dialog input:focus { border-color: #4a4f8a; }
     if (!els.notes.open) return;
     const done = todos.filter((t) => t.done).sort((x, y) => (y.doneAt || 0) - (x.doneAt || 0)).slice(0, 10);
     const today = dueDay("today");
+    const keep = document.activeElement?.closest?.("#todoList .todo-row")?.dataset.id;
     els.todoList.innerHTML = open.length || done.length ? "" : `<div class="list-empty">No to-dos yet. Turn on the robot and say "add finish my essay to my to-dos for Friday".</div>`;
     for (const t of [...open, ...done]) {
       const row = document.createElement("div");
       row.className = "reminder-row todo-row" + (t.done ? " done" : "");
+      row.dataset.id = t.id;
       row.innerHTML = `<input type="checkbox"><div><div class="reminder-text"></div><div class="reminder-when"></div></div><button type="button" class="btn">Delete</button>`;
       const box = row.querySelector("input");
       box.checked = t.done;
@@ -2354,6 +2374,7 @@ dialog input:focus { border-color: #4a4f8a; }
       row.querySelector("button").onclick = () => saveTodos(loadTodos().filter((x) => x.id !== t.id));
       els.todoList.appendChild(row);
     }
+    if (keep) [...els.todoList.querySelectorAll(".todo-row")].find((r) => r.dataset.id === keep)?.querySelector("input").focus();
     const notes = loadNotes().sort((x, y) => y.updated - x.updated);
     els.noteList.innerHTML = notes.length ? "" : `<div class="list-empty">No notes yet. Turn on the robot and say "save a note: locker code 4 12 30".</div>`;
     for (const n of notes) {
@@ -2361,7 +2382,9 @@ dialog input:focus { border-color: #4a4f8a; }
       row.className = "reminder-row note-row";
       row.innerHTML = `<div><div class="reminder-text"></div><div class="note-body"></div></div><button type="button" class="btn">Delete</button>`;
       row.querySelector(".reminder-text").textContent = n.title;
-      row.querySelector(".note-body").textContent = clip((n.text.startsWith(n.title) ? n.text.slice(n.title.length) : n.text).trim(), 400);
+      const body = row.querySelector(".note-body");
+      body.textContent = noteBody(n);
+      row.firstElementChild.onclick = () => body.classList.toggle("open");   // tap a note to read all of it
       row.querySelector("button").onclick = () => {
         if (confirm(`Delete the note "${n.title}"?`)) saveNotes(loadNotes().filter((x) => x.id !== n.id));
       };
@@ -2409,9 +2432,11 @@ dialog input:focus { border-color: #4a4f8a; }
       const shown = tool ? tool.show(s.args || {}) : JSON.stringify(s.args || {});
       const title = `${s.status === "running" ? '<span class="spinner"></span>' : ""}${escapeHtml(tool?.label || s.name)}${shown ? ` <code>${escapeHtml(String(shown))}</code>` : ""}`;
       const result = s.status === "error" ? `Failed: ${s.result}` : s.status === "denied" ? s.result : s.result != null ? `→ ${s.result}` : "";
-      const card = s.status === "ask" && approvals.has(s.key)
+      const wait = s.status === "ask" && approvals.get(s.key);
+      const off = wait && performance.now() - wait.at < APPROVE_WAIT_MS ? " disabled" : "";
+      const card = wait
         ? `<div class="approve" data-key="${escapeHtml(s.key)}"><div class="approve-text">${escapeHtml(s.ask)}</div>` +
-          `<div class="alert-actions"><button type="button" class="chip-btn primary" data-approve="yes">Allow</button><button type="button" class="chip-btn" data-approve="no">Deny</button></div></div>`
+          `<div class="alert-actions"><button type="button" class="chip-btn primary" data-approve="yes"${off}>Allow</button><button type="button" class="chip-btn" data-approve="no"${off}>Deny</button></div></div>`
         : "";
       return `<li class="step ${s.status}"><div class="step-title">${title}</div>${result ? `<div class="step-result">${escapeHtml(result.length > 400 ? result.slice(0, 400) + "…" : result)}</div>` : ""}${card}</li>`;
     }
@@ -2442,6 +2467,9 @@ dialog input:focus { border-color: #4a4f8a; }
   }
 
   // Allow/Deny: a step whose tool has ask() waits here for the user's tap. Stop rejects it like any other step.
+  // A new card's buttons stay off for a moment, so the second click of a double-click can't answer the next card
+  // (it appears in the same spot) before the user has read it.
+  const APPROVE_WAIT_MS = 500;
   const approvals = new Map();
   function approval(s) {
     s.key = uid();
@@ -2450,12 +2478,13 @@ dialog input:focus { border-color: #4a4f8a; }
       const stop = () => { approvals.delete(s.key); reject(new DOMException("Stopped", "AbortError")); };
       if (signal.aborted) return stop();
       signal.addEventListener("abort", stop, { once: true });
-      approvals.set(s.key, (yes) => { signal.removeEventListener("abort", stop); approvals.delete(s.key); resolve(yes); });
+      approvals.set(s.key, { at: performance.now(), answer: (yes) => { signal.removeEventListener("abort", stop); approvals.delete(s.key); resolve(yes); } });
+      setTimeout(() => els.thread.querySelectorAll(`[data-key="${s.key}"] [data-approve]`).forEach((b) => { b.disabled = false; }), APPROVE_WAIT_MS);
     });
   }
   els.thread.addEventListener("click", (e) => {
     const b = e.target.closest("[data-approve]");
-    if (b) approvals.get(b.closest("[data-key]")?.dataset.key)?.(b.dataset.approve === "yes");
+    if (b && !b.disabled && e.detail < 2) approvals.get(b.closest("[data-key]")?.dataset.key)?.answer(b.dataset.approve === "yes");
   });
 
   async function callModel(model, messages, key) {
@@ -2555,9 +2584,10 @@ dialog input:focus { border-color: #4a4f8a; }
           const triedReminder = m.steps.some((s) => s.type === "tool" && /reminder/.test(s.name));
           const claimsReminder = /\b(i'?ll remind|i will remind|will remind you|reminder (is |has been )?(set|scheduled|created)|(set|scheduled) (a |your |the )?reminder)\b/i;
           // Same for a note or to-do it says it saved without calling save_note or add_todo.
-          const wantsSave = /\b(note|jot|write (this|that|it) down|to-?dos?|task list)\b/i.test(text) && !/\b(delete|remove|list|show|find|read|which|what|did|check off|done with)\b/i.test(text);
+          const wantsSave = /\b(save|add|put|keep|store)\b[^.!?]{0,80}\b(notes?|to[- ]?dos?|task list)\b|\bjot\b|\bwrite (this|that|it) down\b|\b(take|make) a note\b|\bnote (this|that|it) down\b/i.test(text)
+            && !/\b(delete|remove|show|find|read|which|what|did|check off|done with)\b|\blist (me |all )?(my|the|of)\b|^\s*list\b/i.test(text);
           const triedSave = m.steps.some((s) => s.type === "tool" && /note|todo/.test(s.name));
-          const claimsSaved = /\b((i'?ve|i have|i) (saved|added|noted|written|jotted)|(saved|added) (it |that |this )?(to|in|as) (a |your |the )?(notes?|to-?dos?|list)|(note|to-?do) (is |has been |was )?(saved|added|created))\b/i;
+          const claimsSaved = /^\s*(saved|added|noted|done)\b|\b((i'?ve|i have|i) (saved|added|noted|jotted)|(saved|added) (it |that |this )?(to|in|as) (a |your |the )?(notes?|to[- ]?dos?|list)|(note|to-?do) (is |has been |was )?(saved|added|created))\b/i;
           const refused = /can(no|[’']|)t|unable|couldn/i.test(content);
           const nudge = /\d\s*[÷\/×*+x-]\s*\d[\d,.]*\s*=\s*[$₩€£]?\s*\d/.test(content)
             ? "You wrote arithmetic in your answer. Work it out with the calculator tool instead, then give the final answer."
