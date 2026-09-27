@@ -1378,6 +1378,7 @@ dialog input:focus { border-color: #4a4f8a; }
     "Never say a reminder is set unless set_reminder succeeded. " +
     "For school work or anything important, pass important: true, a link if they named a site or doc, and focus_minutes (at least 10). " +
     "Notes: save_note keeps something the user wants to remember, find_notes looks notes up, append_to_note adds to one. " +
+    "When the user asks about something they may have saved (a code, a list, a fact about them), call find_notes with a few key words before answering. " +
     "To-dos: add_todo (with a due date if they gave one), list_todos, complete_todo. " +
     "Never say a note or to-do is saved or done unless the tool succeeded. " +
     "To answer questions about notes, to-dos or reminders, check with find_notes, list_todos or list_reminders, since they change outside this chat. " +
@@ -1653,6 +1654,11 @@ dialog input:focus { border-color: #4a4f8a; }
   const clip = (t, n) => (t.length > n ? t.slice(0, n) + "…" : t);
   const noteText = (n) => `${n.title}\n${n.text}`;
   const noteTitle = (n) => n.title;
+  const NOTE_STOP = new Set(("my me mine i im the a an what whats is are was were be of for to in on at and or it its that this these those " +
+    "do does did you your please can could would tell show find look up about from with note notes saved save remember again there " +
+    "any have has had where when which who how get give know").split(" "));
+  // Lowercase words minus filler like "my" and "what's"; single letters are dropped but single digits kept.
+  const noteWords = (t) => (String(t ?? "").toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).filter((w) => !NOTE_STOP.has(w) && (w.length > 1 || /\d/.test(w)));
   // The note minus its title when the title was taken from its first line (whole, or cut at 80).
   function noteBody(n) {
     const first = n.text.split("\n")[0];
@@ -1700,15 +1706,23 @@ dialog input:focus { border-color: #4a4f8a; }
   TOOLS.find_notes = {
     label: "Looked through notes",
     spec: {
-      description: "Find the user's notes by words in them, or list all notes (newest first) when there's no query.",
-      parameters: { type: "object", properties: { query: { type: "string", description: "Optional words to look for" } } },
+      description: "Look up the user's saved notes (codes, lists, ideas, things to remember) by a few key words, e.g. 'locker code'. " +
+        "Returns the best matches, or every note if nothing matches or there's no query.",
+      parameters: { type: "object", properties: { query: { type: "string", description: "A few key words, e.g. 'locker code'" } } },
     },
     show: (a) => a.query || "",
     run: (a) => {
-      const words = String(a.query || "").toLowerCase().split(/\s+/).filter(Boolean);
-      const list = loadNotes().filter((n) => words.every((w) => noteText(n).toLowerCase().includes(w))).sort((x, y) => y.updated - x.updated);
-      if (!list.length) return words.length ? "No notes match that." : "No notes yet.";
-      return list.slice(0, 15).map((n) => `${n.id}: ${n.title}\n${clip(n.text, 600)}`).join("\n\n") + (list.length > 15 ? `\n\n(${list.length - 15} more)` : "");
+      const all = loadNotes().sort((x, y) => y.updated - x.updated);
+      if (!all.length) return "No notes yet.";
+      const show = (list) => list.slice(0, 15).map((n) => `${n.id}: ${n.title}\n${clip(n.text, 600)}`).join("\n\n") + (list.length > 15 ? `\n\n(${list.length - 15} more)` : "");
+      // Any key word counts (a question like "what's my locker code" still finds "Locker: 4 12 30"); best matches first.
+      const words = noteWords(a.query);
+      if (!words.length) return show(all);
+      const hits = all.map((n) => {
+        const have = noteWords(noteText(n));
+        return { n, score: words.filter((w) => have.some((x) => x.startsWith(w) || w.startsWith(x))).length };
+      }).filter((h) => h.score).sort((x, y) => y.score - x.score).map((h) => h.n);
+      return hits.length ? show(hits) : `No note matched "${a.query}", so here are all ${all.length} notes:\n\n${show(all)}`;
     },
   };
   TOOLS.append_to_note = {
@@ -2614,13 +2628,18 @@ dialog input:focus { border-color: #4a4f8a; }
           const triedSave = m.steps.some((s) => s.type === "tool" && /note|todo/.test(s.name));
           const claimsSaved = /^\s*(saved|added|noted|done)\b|\b((i'?ve|i have|i) (saved|added|noted|jotted)|(saved|added) (it |that |this )?(to|in|as) (a |your |the )?(notes?|to[- ]?dos?|list)|(note|to-?do) (is |has been |was )?(saved|added|created))\b/i;
           const refused = /can(no|[’']|)t|unable|couldn/i.test(content);
+          // And a question about something the user may have saved ("what's my locker code?") answered without looking.
+          const asksRecall = /^\s*(what|where|when|which|who)\b[^?.!]*\bmy\b|\b(do you (know|remember)|remind me (what|of)|what did i (save|say|note|write)|tell me my)\b/i.test(text) ||
+            (/\bmy\b/i.test(text) && /\b(don'?t|do not) (have|know)\b[^.]*\b(access|your)\b|\bcan'?t access\b|\bno access to\b/i.test(content));
           const nudge = /\d\s*[÷\/×*+x-]\s*\d[\d,.]*\s*=\s*[$₩€£]?\s*\d/.test(content)
             ? "You wrote arithmetic in your answer. Work it out with the calculator tool instead, then give the final answer."
             : wantsReminder && !triedReminder && !content.includes("?") && claimsReminder.test(content) && !refused
               ? "You haven't set the reminder yet. Call set_reminder now with the exact time including minutes."
               : wantsSave && !triedSave && !content.includes("?") && claimsSaved.test(content) && !refused
                 ? "You haven't saved it yet. Call save_note (for a note) or add_todo (for a to-do) now."
-                : "";
+                : asksRecall && !m.steps.some((s) => s.type === "tool")
+                  ? "Before answering, look it up: call find_notes with a few key words (e.g. \"locker code\"), or list_todos or list_reminders if it's about tasks or reminders."
+                  : "";
           if (nudge && !nudged) {
             nudged = true;
             messages.push({ role: "assistant", content }, { role: "user", content: nudge });
