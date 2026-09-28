@@ -3,7 +3,7 @@
 // School: the class page, pages opened from it, email, a calculator and BOON.
 // The session ends by itself when the timer runs out. Turning it off early takes a hard algebra question,
 // and while that question is open every other tab is locked. Leaving Chrome (another app or desktop) brings
-// the student back after a moment.
+// the student back after a moment; on a Mac with the BOON Focus helper set up, other apps are hidden at once.
 importScripts("algebra.js");
 
 const EMAIL = ["mail.google.com", "gmail.com", "outlook.office.com", "outlook.office365.com", "outlook.live.com",
@@ -56,6 +56,7 @@ const saveSession = () => chrome.storage.local.set({ session: cached });
 async function endSession(reason) {
   const s = cached;
   cached = null;
+  stopHelper();
   // Every BOON tab hears about this through bridge.js, which watches this storage.
   await chrome.storage.local.set({ session: null, lastEnd: { reason, at: Date.now() } });
   await chrome.alarms.clear("boon-focus-end");
@@ -453,6 +454,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       s.workTabId = tab.id;
       cached = s;
       await saveSession();
+      startHelper(s);
       await chrome.alarms.create("boon-focus-end", { when: s.end });
       showIslandEverywhere();
       await fullScreen(s, tab.windowId);
@@ -499,6 +501,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 const AWAY_FIRST_MS = 100, AWAY_FAST_MS = 400, AWAY_SLOW_MS = 1500, AWAY_FAST_TRIES = 10;
 let away = false, awayTimer = 0, awayTries = 0;
 function leftChrome() {
+  if (cached) startHelper(cached);
   if (away) return;
   away = true;
   awayTries = 0;
@@ -540,6 +543,52 @@ async function focusBack(s, first) {
   if (first && main?.windowId === tab.windowId) await fullScreen(s, tab.windowId);
   await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
 }
+
+// ----- the Mac helper -----
+// Chrome can only ask macOS to bring it back, and macOS may say no while the student is in another app. The BOON
+// Focus helper (boon/focus-helper, set up once with install.sh) is a small Mac script Chrome runs for this add-on
+// during focus: it hides any other app the moment it comes to the front (hides, never quits) and brings Chrome
+// back. It is told when focus ends and stops then; disconnecting (focus over, the add-on turned off or reloaded,
+// Chrome quitting) also stops it, and so does this add-on going quiet (Chrome froze): it checks in every 10 s.
+// Without the helper, or on another computer, everything above works as before.
+const HELPER = "com.boon.focus", HELPER_RETRY_MS = 60000, HELPER_BEAT_MS = 10000;
+let helper = null, helperEnd = 0, helperRetry = 0;
+function startHelper(s) {
+  if (helper) {
+    if (helperEnd !== s.end) { helperEnd = s.end; try { helper.postMessage({ end: s.end }); } catch {} }
+    return;
+  }
+  // Not set up, or it stopped by itself: try again at most once a minute, the next time they leave Chrome.
+  if (Date.now() < helperRetry || !chrome.runtime.connectNative) return;
+  helperRetry = Date.now() + HELPER_RETRY_MS;
+  let port;
+  try { port = chrome.runtime.connectNative(HELPER); } catch { return; }
+  helper = port;
+  helperEnd = s.end;
+  port.onDisconnect.addListener(() => {
+    void chrome.runtime.lastError;
+    if (helper !== port) return;
+    helper = null;
+    helperEnd = 0;
+    helperRetry = Date.now() + HELPER_RETRY_MS;
+  });
+  try { port.postMessage({ end: s.end }); } catch {}
+  setTimeout(() => checkIn(port), HELPER_BEAT_MS);
+}
+function checkIn(port) {
+  if (helper !== port) return;
+  try { port.postMessage({ end: helperEnd }); } catch { return; }
+  setTimeout(() => checkIn(port), HELPER_BEAT_MS);
+}
+function stopHelper() {
+  const port = helper;
+  helper = null;
+  helperEnd = 0;
+  helperRetry = 0;
+  if (port) try { port.disconnect(); } catch {}
+}
+// The add-on was reloaded, Chrome restarted, or Chrome woke this script up mid-session: start the helper again.
+loadSession().then((s) => { if (s && Date.now() < s.end) startHelper(s); });
 
 // ----- full screen -----
 // The work window goes full screen for the session, so on a Mac it has a desktop of its own and nothing else

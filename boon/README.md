@@ -102,6 +102,22 @@ The island counts how many times you left. It can't stop the swipe itself, or a 
 apps (including Calculator) aren't allowed during focus: use Desmos or calculator.net in Chrome. Quitting Chrome (⌘Q)
 always gets you out, so the add-on can never trap your Mac. When focus ends, the window goes back to how it was.
 
+**Other Mac apps, instantly (Mac helper).** macOS sometimes won't let Chrome pull itself forward while you're in another
+app, so on its own the add-on can be slow to bring you back. The BOON Focus helper in `boon/focus-helper` fixes that:
+during focus it hides any other app the moment it comes to the front (hidden, never quit, so nothing in it is lost)
+and brings Chrome back. Set it up once from the repo folder, then click the reload arrow on BOON Focus in
+`chrome://extensions`:
+
+```sh
+boon/focus-helper/install.sh
+```
+
+It copies itself to `~/Library/Application Support/BOON Focus` (macOS doesn't let it run from the Desktop), so run
+`install.sh` again after pulling a new version of the helper. It only runs while focus is on, and never hides password
+or Touch ID prompts, the login window, Force Quit or System Settings. It stops when focus ends, when Chrome quits, if
+Chrome stops responding, and if Chrome can't be brought back within 15 seconds. Its log is
+`~/Library/Logs/boon-focus-helper.log`, and `install.sh --uninstall` removes it.
+
 **Safety stop.** The add-on never closes a tab or window. If it can't open or show your work tab (or the question)
 three times within two minutes, it turns focus off by itself and BOON shows "Focus stopped", so Chrome keeps working.
 If Chrome ever still gets stuck, quit it (⌘Q), rename the `boon/extension` folder (for example to `extension-off`) and
