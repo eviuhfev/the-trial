@@ -1,43 +1,53 @@
 #!/bin/bash
 # BOON Focus helper for Chrome on a Mac (native messaging host "com.boon.focus"; set up once with install.sh).
 # The BOON Focus add-on starts it when a focus session begins and sends {"end": <ms>}, the time focus ends, then
-# the same again every few seconds while Chrome is working normally. It runs watch.js until the end, which hides any
-# other app that comes to the front and brings Chrome back. watch.js stops by itself if those messages stop
-# (Chrome froze), so a stuck Chrome can't keep other apps hidden. When focus ends, or the add-on is turned off or
-# reloaded, or Chrome quits, Chrome closes this script's input: it stops watch.js and exits.
-here="$(cd "$(dirname "$0")" && pwd)"
-osa="${BOON_FOCUS_OSASCRIPT:-/usr/bin/osascript}"
-log="$HOME/Library/Logs/boon-focus-helper.log"
-beat="${TMPDIR:-/tmp}"
-beat="${beat%/}/boon-focus-beat-$$"
-mkdir -p "$(dirname "$log")" 2>/dev/null
-[ -f "$log" ] && [ "$(wc -c <"$log")" -gt 200000 ] && mv -f "$log" "$log.old"
+# the same again every 10 s while Chrome is working normally. It runs watch.js until the end, which hides any other
+# app that comes to the front and brings Chrome back. watch.js pauses if those messages stop (Chrome froze), so a
+# stuck Chrome can't keep other apps hidden. When focus ends, or the add-on is turned off or reloaded, or Chrome
+# quits, Chrome closes this script's input: it stops watch.js and exits. If watch.js stops by itself, this exits
+# too, so the add-on can start a fresh one later.
+main() {
+  here="$(cd "$(dirname "$0")" && pwd)"
+  osa="${BOON_FOCUS_OSASCRIPT:-/usr/bin/osascript}"
+  log="$HOME/Library/Logs/boon-focus-helper.log"
+  beat="${TMPDIR:-/tmp}"
+  beat="${beat%/}/boon-focus-beat-$$"
+  mkdir -p "$(dirname "$log")" 2>/dev/null
+  [ -f "$log" ] && [ "$(wc -c <"$log")" -gt 200000 ] && mv -f "$log" "$log.old"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) host $$ started" >>"$log" 2>/dev/null
 
-watcher=""
-now_end=""
+  watcher=""
+  now_end=""
+  trap 'stop; rm -f "$beat"; echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) host $$ stopped" >>"$log" 2>/dev/null' EXIT
+  trap 'exit 0' TERM INT HUP
+
+  # Each message is 4 bytes of length (this Mac's byte order), then that much JSON. dd reads one byte at a time so
+  # nothing past the message is swallowed.
+  while :; do
+    len=$(dd bs=1 count=4 2>/dev/null | od -An -tu4 | tr -d ' \n')
+    case "$len" in '' | *[!0-9]*) break ;; esac
+    [ "$len" -ge 1 ] && [ "$len" -le 4096 ] || break
+    msg=$(dd bs=1 count="$len" 2>/dev/null)
+    # watch.js stopped by itself (it only does when something is wrong): exit, and the add-on tries again later.
+    if [ -n "$watcher" ] && ! kill -0 "$watcher" 2>/dev/null; then watcher=""; break; fi
+    end=$(printf '%s' "$msg" | sed -n 's/.*"end" *: *\([0-9][0-9]*\).*/\1/p')
+    [ -n "$end" ] || continue
+    touch "$beat"
+    # A new end (or the first one) starts watch.js again; the same end is just the add-on saying it's still there.
+    [ "$end" = "$now_end" ] && continue
+    now_end="$end"
+    stop
+    if [ "$end" -gt 0 ]; then
+      "$osa" -l JavaScript "$here/watch.js" "$end" "$$" "$beat" </dev/null >/dev/null 2>>"$log" &
+      watcher=$!
+    fi
+  done
+}
 stop() {
   [ -n "$watcher" ] && kill "$watcher" 2>/dev/null
   watcher=""
 }
-trap 'stop; rm -f "$beat"' EXIT
-trap 'exit 0' TERM INT HUP
-
-# Each message is 4 bytes of length (this Mac's byte order), then that much JSON. dd reads one byte at a time so
-# nothing past the message is swallowed.
-while :; do
-  len=$(dd bs=1 count=4 2>/dev/null | od -An -tu4 | tr -d ' \n')
-  case "$len" in '' | *[!0-9]*) break ;; esac
-  [ "$len" -ge 1 ] && [ "$len" -le 4096 ] || break
-  msg=$(dd bs=1 count="$len" 2>/dev/null)
-  end=$(printf '%s' "$msg" | sed -n 's/.*"end" *: *\([0-9][0-9]*\).*/\1/p')
-  [ -n "$end" ] || continue
-  touch "$beat"
-  # A new end (or the first one) starts watch.js again; the same end is just the add-on saying it's still there.
-  [ "$end" = "$now_end" ] && continue
-  now_end="$end"
-  stop
-  if [ "$end" -gt 0 ]; then
-    "$osa" -l JavaScript "$here/watch.js" "$end" "$$" "$beat" </dev/null >/dev/null 2>>"$log" &
-    watcher=$!
-  fi
-done
+# Everything runs inside main, and the script exits right after, so bash never reads this file again once it has
+# started (install.sh may replace it while it runs).
+main "$@"
+exit 0

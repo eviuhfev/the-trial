@@ -113,10 +113,12 @@ boon/focus-helper/install.sh
 ```
 
 It copies itself to `~/Library/Application Support/BOON Focus` (macOS doesn't let it run from the Desktop), so run
-`install.sh` again after pulling a new version of the helper. It only runs while focus is on, and never hides password
-or Touch ID prompts, the login window, Force Quit or System Settings. It stops when focus ends, when Chrome quits, if
-Chrome stops responding, and if Chrome can't be brought back within 15 seconds. Its log is
-`~/Library/Logs/boon-focus-helper.log`, and `install.sh --uninstall` removes it.
+`install.sh` again after pulling a new version of the helper or moving the repo. It prints the add-on ID it set up:
+if that isn't the ID on the BOON Focus card in `chrome://extensions`, run `install.sh <that ID>`. It only runs while
+focus is on, and never hides password or Touch ID prompts, the login window, Force Quit or System Settings. It stops
+when focus ends or Chrome quits, and it leaves your other apps alone while Chrome isn't responding, or if Chrome can't
+be brought back within 15 seconds (until you're back in Chrome). Its log is `~/Library/Logs/boon-focus-helper.log`,
+and `install.sh --uninstall` removes it.
 
 **Safety stop.** The add-on never closes a tab or window. If it can't open or show your work tab (or the question)
 three times within two minutes, it turns focus off by itself and BOON shows "Focus stopped", so Chrome keeps working.

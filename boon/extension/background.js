@@ -499,11 +499,12 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 // type in another app. Pull-backs only move focus: they never open tabs or windows or count toward the safety
 // stop, and quitting Chrome (⌘Q) still ends them, so they can never trap the Mac.
 const AWAY_FIRST_MS = 100, AWAY_FAST_MS = 400, AWAY_SLOW_MS = 1500, AWAY_FAST_TRIES = 10;
-let away = false, awayTimer = 0, awayTries = 0;
+let away = false, awayTimer = 0, awayTries = 0, awayAt = 0;
 function leftChrome() {
   if (cached) startHelper(cached);
   if (away) return;
   away = true;
+  awayAt = Date.now();
   awayTries = 0;
   clearTimeout(awayTimer);
   awayTimer = setTimeout(pullBack, AWAY_FIRST_MS);
@@ -602,11 +603,21 @@ async function fullScreen(s, windowId) {
   await chrome.windows.update(windowId, { state: "fullscreen" }).catch(() => {});
 }
 
+// With the Mac helper, a trip to another app is often undone before the pull-back above starts. It still counts on
+// the island and puts the work back in full screen. A switch between Chrome's own windows is quicker than this.
+const BOUNCE_MS = 20;
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
   if (windowId === chrome.windows.WINDOW_ID_NONE) { leftChrome(); return; }
+  const bounced = away && awayTries === 0 && !!helper && Date.now() - awayAt >= BOUNCE_MS;
   cameBack();
   const s = await getSession();
   if (!s) return;
+  if (bounced) {
+    s.left = (s.left || 0) + 1;
+    await saveSession();
+    const main = await getTab(s.quiz ? s.quiz.tabId : s.workTabId);
+    if (main?.windowId === windowId) await fullScreen(s, windowId);
+  }
   const [tab] = await chrome.tabs.query({ active: true, windowId });
   if (tab && !(await allowedNow(s, tab))) await bringBack();
 });
