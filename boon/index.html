@@ -1946,7 +1946,7 @@ dialog input:focus { border-color: #4a4f8a; }
   // 3D models use the user's limited free GPU time, so the robot only makes one when the task asks for it.
   const WANTS_3D = /\b3\s?-?d\b|\bthree[- ]?d|\bstl\b|\bglb\b|\bprint|\bmodel|figurine|sculpt|\bmesh\b|miniature|\btoy\b/i;
   // "Turn it into 3D", "make this picture 3D": the task means an image that's already there.
-  const MEANS_OLD_IMAGE = /\b(turn|make|convert|change|print)\s+(it|this|that)\b|\b(it|this|that)\s+(in)?to\s+(an?\s+)?(3\s?-?d|stl|model)|\b(the|my|last|same|previous|this|that)\s+(image|picture|photo|pic|drawing)\b|\bof (it|this|that|them)\b|\b(you|u) (just )?(drew|made|generated|created)\b/i;
+  const MEANS_OLD_IMAGE = /\b(turn|make|convert|change|print)\s+(it|this|that)\b|\b(it|this|that)\s+(in)?to\s+(an?\s+)?(3\s?-?d|stl|model)|\b(the|my|last|same|previous|this|that)\s+(image|picture|photo|pic|drawing)\b|^\s*((please|pls|now|ok(ay)?|can you|could you)[\s,]+)*(make|give me|turn|convert|create|print|get|build)\b[^.!?,]{0,30}\bof (it|this|that|them)\s*([.!?,]|(please|pls|now|too)\b|$)|\b(the one|what) (you|u) (just )?(drew|made|generated|created)\b/i;
   function newCreation(prompt, image) {
     const c = { id: uid(), prompt };
     if (image) c.image = image;
@@ -1976,7 +1976,8 @@ dialog input:focus { border-color: #4a4f8a; }
   }
   // What the task says when it ends on a failed picture or 3D model.
   function makeFailText(steps) {
-    const made = steps.filter((s) => s.type === "tool" && /^(make_image|make_3d_model)$/.test(s.name));
+    // Only real tries count: a guard or a missing prompt after a failure doesn't hide why it failed.
+    const made = steps.filter((s) => s.type === "tool" && /^(make_image|make_3d_model)$/.test(s.name) && (s.why || s.status === "done"));
     const last = made[made.length - 1];
     if (!last || last.status !== "error" || !last.why) return "";
     const lead = last.name === "make_image" ? "I couldn't make the picture." : "I couldn't make the 3D model.";
@@ -2018,17 +2019,17 @@ dialog input:focus { border-color: #4a4f8a; }
       // "Yes" to the robot's own 3D offer ("Want me to turn it into a 3D model?") counts as asking for 3D.
       const ms = agentChat()?.messages || [], prev = ms[ms.indexOf(agentMsg) - 2];
       const saidYes = prev?.kind === "agent" && /\b(3\s?-?d|three[- ]?d|stl|print\w*)\b[^.!?\n]*\?/i.test(prev.content || "") &&
-        /^\s*(y|yes|yeah|yep|ya|sure|ok(ay)?|pls|please|do it|go ahead|go for it|make it|let'?s do it|sounds good|why not|of course|absolutely)\b/i.test(agentTask);
+        /^\s*(y|yes|yeah|yep|ya|sure|ok(ay)?|pls|please|do it|go ahead|go for it|make it|let'?s do it|sounds good|why not|of course|absolutely)\b[\s,.!]*(please|pls|do it|go ahead|make it)?[\s.!]*$/i.test(agentTask);
       if (!WANTS_3D.test(agentTask) && !saidYes) throw new Error("the user didn't ask for 3D, so no model was made (it uses their free GPU time). If they want a picture, call make_image now; otherwise offer to make a 3D model");
       stopIfGpuOut(s);
       const prompt = promptOf(a).trim().slice(0, 400);
       const ready = (x) => x.image && !x.status;
-      // An image from this task (made or attached) comes first; then the picture the offer was about;
+      // An image from this task (made or attached) comes first; then, after a plain "yes", the picture the offer was about;
       // then a new picture, unless the task means an old one.
       let c = (agentMsg.creations || []).filter(ready).pop();
-      const offered = saidYes && (prev.creations || []).filter(ready).pop();
-      if (!c && offered) { c = newCreation(offered.prompt || "", offered.image); if (offered.imageBy) c.imageBy = offered.imageBy; }
       if (!c && agentImages.length) c = newCreation("", agentImages[agentImages.length - 1]);
+      const offered = saidYes && !WANTS_3D.test(agentTask) && (prev.creations || []).filter(ready).pop();
+      if (!c && offered) { c = newCreation(offered.prompt || "", offered.image); if (offered.imageBy) c.imageBy = offered.imageBy; }
       const old = () => chatCreations().find(ready);
       if (!c && !(prompt && !MEANS_OLD_IMAGE.test(agentTask)) && old()) {
         const o = old();
@@ -2954,6 +2955,8 @@ dialog input:focus { border-color: #4a4f8a; }
   }
   // An earlier "I can't make pictures" (plain chat, or a robot turn from before it could).
   const CANT_PICTURE = /\b(can(no|['’])?t|unable to|not able to|(don['’]?t|do not) have the (ability|capability) to)\b[^.!?\n]{0,40}\b(create|generate|make|draw|produce|render)\b[^.!?\n]{0,30}\b(images?|pictures?|photos?|drawings?|illustrations?|art)\b/i;
+  // Just the sentence where it says that about itself ("I can't create images."), not advice like "you can't make great photos in the dark".
+  const CANT_SENTENCE = new RegExp(`[^.!?\\n]*\\bI\\b[^.!?\\n]*?${CANT_PICTURE.source}[^.!?\\n]*[.!?]?`, "gi");
 
   async function runAgent(text) {
     if (!text) return;
@@ -2973,9 +2976,10 @@ dialog input:focus { border-color: #4a4f8a; }
     let past = chat.messages
       .filter((x) => !x.error && (!x.kind || x.kind === "agent-task" || (x.kind === "agent" && x.content)))
       .map(({ role, content }) => ({ role, content }));
-    // Send an earlier "I can't make pictures" back only as a note that no picture was made, so the model doesn't copy it
-    // and "try again" still knows what the picture was.
-    past = past.map((x) => x.role === "assistant" && CANT_PICTURE.test(textOf(x.content)) ? { role: "assistant", content: "(No picture was made that time.)" } : x);
+    // Leave an earlier "I can't make pictures" out (a note that no picture was made if nothing else was said), so the model
+    // doesn't copy it, and "try again" still knows what the picture was.
+    past = past.map((x) => x.role === "assistant" && CANT_PICTURE.test(textOf(x.content))
+      ? { role: "assistant", content: textOf(x.content).replace(CANT_SENTENCE, "").trim() || "(No picture was made that time.)" } : x);
     // On this computer, only the recent turns: the instructions and tools already fill ~2,600 of Ollama's 4,096 tokens,
     // and running past that makes Ollama drop its cached copy of them (slow again) or the task itself.
     if (model.local) past = recentTurns(past);
@@ -3018,7 +3022,7 @@ dialog input:focus { border-color: #4a4f8a; }
         }));
         if (!calls.length && content.includes("{")) {
           const t = callsInText(content);
-          if (t.calls.length) { calls = t.calls; content = t.rest; }
+          if (t.calls.length && !t.rest) { calls = t.calls; content = t.rest; }   // only a reply that is nothing but the call
         }
         if (!calls.length) {
           // Small models sometimes finish a sum in their head or claim a reminder they never set.
@@ -3047,32 +3051,44 @@ dialog input:focus { border-color: #4a4f8a; }
           const noAccess = /\b(don['’]?t|do not) (have|know)\b[^.]*\b(access|your|that)\b|\b(can['’]?t|cannot|unable to|not able to) access\b|\bno access to\b/i.test(content);
           const asksRecall = !makes && ((recallAsk && aboutSaved) || (/\bmy\b/i.test(text) && noAccess));
           // And a picture or 3D model it said it can't make, or said it made, without calling the tool.
-          const makeAsk = (t) => /\b(draw|sketch|paint|pics?|pictures?|images?|photos?|illustrations?|logos?|wallpapers?|3\s?-?d|stl|figurines?)\b/i.test(t)
-            && /\b(make|create|draw|generate|design|paint|sketch|render|turn|convert|build|print|give me|show me)\b/i.test(t) && !/^\s*(how|why|what)\b/i.test(t);
+          const makeAsk = (t) => /\b(draw|sketch|paint|pictures?|images?|photos?|illustrations?|logos?|wallpapers?|3\s?-?d|stl|figurines?)\b/i.test(t)
+            && /\b(make|create|draw|generate|design|paint|sketch|render|turn|convert|build|print|give me|show me)\b/i.test(t) && !/^\s*(how|why|what)\b/i.test(t)
+            // Not help with drawing, a math drawing, or a to-do or reminder that mentions pictures.
+            && !/\b(teach|tips?|ideas?|things to (draw|paint|make)|graphs?|altitude|triangle|angles?|equation|summar\w*|delete|remove|to-?dos?|remind\w*)\b/i.test(t);
           // "Try again" or "another one" right after a picture task, or "yes" to its offer or refusal, is the same ask.
           const prev = (kind) => chat.messages.filter((x) => x.kind === kind).slice(-2, -1)[0]?.content || "";
+          // Only when the turn right before this task was a picture turn, or offered or refused a picture.
+          const before = chat.messages[chat.messages.length - 3];
+          const offerOrRefusal = (t) => CANT_PICTURE.test(t) || /\b(generate|create|make|draw)\w*\s+(an?\s+|another\s+|the\s+)?(images?|pictures?|pics?|drawings?|illustrations?|3\s?-?d)\b[^.!?]*\?|\b(me to|shall i|should i|can i|i can|i could) (draw|sketch|paint)\b[^.!?]*\?|\b(draw|sketch|paint)\s+(it|one|that|this|them|him|her)\b[^.!?]*\?/i.test(t);
+          const afterPicture = before?.kind === "agent" && (offerOrRefusal(before.content || "") ||
+            (before.steps || []).some((s) => s.type === "tool" && /^(make_image|make_3d_model)$/.test(s.name)));
           const again = /^\s*((ok(ay)?|now|please|pls|can you|could you|just)[\s,]+)*(try( it)?( again| now)?|again|retry|redo( it)?|do it( again| now)?|(make |do )?another( one)?|one more( time)?)[\s,.!?]*(please|pls|now)?[\s.!?]*$/i.test(text);
           const yes = /^\s*(yes|yeah|yep|ya|sure|ok(ay)?|pls|please|go ahead|go for it|make it|just do it|(yes,? )?you can( do it)?)\b[\s,.!]*(pls|please|do it|go ahead|make it)?[\s.!]*$/i.test(text)
-            && /\b(images?|pictures?|draw|drawing|make|create|generate)\b[^.!?]*\?|can(no|[’']|)t|unable|couldn/i.test(prev("agent"));
-          const wantsMake = makeAsk(text) || ((again || yes) && makeAsk(prev("agent-task")))
-            || /\b(i want|i'?d like|gimme|can i (get|have)|could i (get|have))\b[^.?!]{0,30}\b(pics?|pictures?|images?|drawings?)\s+of\b/i.test(text)
+            && offerOrRefusal(prev("agent"));
+          const wantsMake = makeAsk(text) || ((again || yes) && afterPicture && makeAsk(prev("agent-task")))
+            || /\b(i want|i'?d like|gimme|can i (get|have)|could i (get|have))\s+((?!to\b)\w+\s+){0,3}(pics?|pictures?|images?|drawings?)\s+of\b/i.test(text)
             || /그려|(그림|이미지)[^.?!]{0,20}(만들|생성)/.test(text)
-            || /^\s*an?\s[^.?!]*,\s*(digital art|oil painting|watercolou?r|pixel art|anime style|photorealistic|concept art|cinematic lighting)\b/i.test(text)
+            // It said it can't make pictures, and the task starts like an ask ("generate an anime girl", "wallpaper of a galaxy").
+            || (CANT_PICTURE.test(content) && /^\s*((can|could|would) (you|u)\s+|pls\s+|please\s+)?(generate|create|draw|make|design|paint|sketch|render)\b|^\s*(an?\s+)?(wallpapers?|illustrations?|pfps?|posters?|comics?|sketch(es)?|paintings?)\s+of\b|\bi(\s+need|'?d love)\s+(an?\s+)?(\w+\s+)?(pics?|pictures?|images?|drawings?)\b/i.test(text))
+            || (/^\s*an?\s[^.?!]*,\s*(digital art|oil painting|watercolou?r|pixel art|anime style|photorealistic|concept art|cinematic lighting)\b/i.test(text)
+              && !/\b(notes?|remind\w*|to-?dos?|list|homework)\b/i.test(text))
             // Looser asks ("img of a dragon", "make a drawing of a cat", "make me a pfp"): only while no tool has run in this task,
-            // and not about a photo they already have ("photo of my homework, solve q3").
-            || (!m.steps.some((s) => s.type === "tool")
-              && /^\s*(an?\s+)?(pics?|imgs?|images?|pictures?|photos?|drawings?)\s+of\s+(?!(my|our|this|that|the|these|those|his|her|their)\b)|\b(make|create|draw|generate|gen|design|paint|render|give me|i want)\s+(me\s+)?(an?\s+|another\s+|some\s+)?((?!(my|your|our|this|that|the)\b)\w+\s+){0,2}(pics?|imgs?|images?|pictures?|photos?|drawings?|paintings?|pfps?|avatars?|stickers?|cartoons?)\b|\b(drwa|darw)\b/i.test(text)
+            // and not about a photo they already have ("photo of my homework, solve q3", or one attached to the task).
+            || (!m.steps.some((s) => s.type === "tool") && !agentImages.length
+              && /^\s*(an?\s+)?(pics?|imgs?|images?|pictures?|photos?|drawings?)\s+of\s+(?!(my|our|this|that|the|these|those|his|her|their)\b)[^?]*$|\b(make|create|draw|generate|gen|design|paint|render|give me|i want(?=\s+(an?|another|some)\s))\s+(me\s+)?(an?\s+|another\s+|some\s+)?((?!(my|your|our|this|that|the)\b)\w+\s+){0,2}(pics?|imgs?|images?|pictures?|photos?|drawings?|paintings?|pfps?|avatars?|stickers?|cartoons?)\b|\b(drwa|darw)\b/i.test(text)
               && !/^\s*(how|why|what|which|where|when|is|are|do|does|explain)\b|\b(ideas?|list|to-?dos?|remind|notes?|solve|homework)\b/i.test(text));
           // The 3D tool's "didn't ask for 3D" isn't a try at a picture; a real failure (GPU time, FLUX down) is, so no retry.
           const guardHit = m.steps.some((s) => s.type === "tool" && /didn.t ask for 3D/.test(s.result || ""));
           const triedMake = m.steps.some((s) => s.type === "tool" && /^(make_image|make_3d_model)$/.test(s.name) && !/didn.t ask for 3D/.test(s.result || ""));
           // Another tool already did the task ("remind me to print the pictures at 5"), or it's a how-to question: no picture.
           const didOther = m.steps.some((s) => s.type === "tool" && s.status === "done" && !/^(make_image|make_3d_model|save_3d_file)$/.test(s.name));
+          // A lookup (notes, to-dos, the date, a sum) doesn't do the task, so the picture push back still applies after one.
+          const didTask = m.steps.some((s) => s.type === "tool" && s.status === "done" && !/^(make_image|make_3d_model|save_3d_file|find_notes|list_todos|list_reminders|get_datetime|calculator|days_between|add_days|split_bill)$/.test(s.name));
           const howTo = /\b(show|tell|teach|explain)( me| us)? how (to|do|does|can|i|you)\b/i.test(text);
           // A question back ("What style?") may end the task, but not a refusal, words instead of a picture, or a picture it claims it made.
-          const refusedMake = refused || /n['’]t\b|\bnot\b|\bbeyond\b|\btext[- ](only|based)\b|\binstead\b|\bdescri(be|ption)\b/i.test(content);
-          const offersMake = /!\[|https?:\/\/|\bhere(['’]s| is| you go| it is)\b|\bi(['’]ve| have)? (made|created|drawn|drew|generated)\b|^\s*done\b|\b(generate|create|make|draw|produce|render)\w* (an? |the |your |that |this )?(images?|pictures?|photos?|drawings?|illustrations?|art)\b/i.test(content);
-          const makeNudge = wantsMake && !triedMake && !didOther && !howTo && (refusedMake || offersMake || guardHit || !content.includes("?"))
+          const refusedMake = refused || /(n['’]t|\bnot)\b[^.!?\n]{0,40}\b(images?|pictures?|pics?|photos?|draw|drawings?|illustrations?|art)\b|\bbeyond\b|\btext[- ](only|based)\b|\binstead\b|\bdescri(be|ption)\b/i.test(content);
+          const offersMake = /!\[|https?:\/\/|\bhere(['’]s| is| it is)\s+your\b|\bhere(['’]s| is| it is)\b[^.!?\n]{0,40}\b(images?|pictures?|pics?|photos?|drawings?|illustrations?|for you\s*[:!])|\bhere you go\b|\bi(['’]ve| have)? (made|created|drawn|drew|generated)\b|^\s*done\b|\b(generate|create|make|draw|produce|render)\w* (an? |the |your |that |this )?(images?|pictures?|photos?|drawings?|illustrations?|art)\b/i.test(content);
+          const makeNudge = wantsMake && !triedMake && !didTask && !howTo && (refusedMake || offersMake || guardHit || !content.includes("?"))
             ? makeNudges ? 'BOON can make pictures. Call the make_image tool now with {"prompt": "<what to draw, in English>"}; don\'t answer in text.'
               : "You haven't made it yet, and you can: call make_image now (or make_3d_model if they asked for 3D)."
             : "";
@@ -3085,8 +3101,8 @@ dialog input:focus { border-color: #4a4f8a; }
                 : asksRecall && !m.steps.some((s) => s.type === "tool")
                   ? "Before answering, look it up: call find_notes with a few key words (e.g. \"locker code\"), or list_todos or list_reminders if it's about tasks or reminders."
                   : makeNudge;
-          // One push back per task, and up to two for a picture.
-          if (nudge && (nudge === makeNudge ? makeNudges < 2 : !nudged)) {
+          // One push back per task, and up to two for a picture (never after another kind).
+          if (nudge && (nudge === makeNudge ? makeNudges < 2 && !nudged : !nudged)) {
             if (nudge === makeNudge) makeNudges++; else nudged = true;
             messages.push({ role: "assistant", content }, { role: "user", content: nudge });
             continue;
@@ -3094,7 +3110,8 @@ dialog input:focus { border-color: #4a4f8a; }
           // A failed picture or model is explained in BOON's own words (anything else the robot did follows).
           const failNote = makeFailText(m.steps), ownWords = hideIds(content, m.steps);
           m.content = failNote ? failNote + (didOther && ownWords ? "\n\n" + ownWords : "")
-            : ownWords || (m.steps.some((s) => s.type === "tool" && s.status === "done") ? "_Done._" : "_The model didn't answer. Try again, or say it another way._");
+            : ownWords || (m.steps.some((s) => s.type === "tool" && s.status === "done") ? "_Done._"
+              : m.steps.some((s) => s.status === "denied") ? "_OK, not done._" : "_The model didn't answer. Try again, or say it another way._");
           break;
         }
         messages.push({ role: "assistant", content, tool_calls: calls });
