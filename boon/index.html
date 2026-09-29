@@ -2925,6 +2925,17 @@ dialog input:focus { border-color: #4a4f8a; }
       return v && typeof v === "object" ? v : {};
     } catch { return { _raw: String(raw) }; }
   }
+  // Some models call a picture tool by a name BOON doesn't have (generate_image, create_image, text_to_image…).
+  function toolName(name) {
+    const n = String(name ?? "").trim(), k = n.toLowerCase().replace(/[\s-]+/g, "_");
+    if (Object.hasOwn(TOOLS, n)) return n;
+    if (Object.hasOwn(TOOLS, k)) return k;
+    // Only names that mean making something: "describe_image" or "analyze_photo" stay unknown.
+    const maker = /generat|creat|make|draw|paint|sketch|render|produc|text_?to|txt2|_gen$|^gen_|maker/.test(k);
+    if (/3d|three_?d|stl|glb|mesh/.test(k)) return /save|download|export/.test(k) ? "save_3d_file" : maker ? "make_3d_model" : n;
+    if (/^(draw|paint|sketch)$/.test(k) || (maker && /image|img|picture|photo|artwork|illustrat/.test(k))) return "make_image";
+    return n;
+  }
   // Ollama only turns a reply into a tool call when it starts with <tool_call>, so a call Qwen writes as plain JSON
   // (or in a ```json block) stays text. Only an object naming one of BOON's tools, with its arguments, counts.
   const TEXT_CALL = /<tool_call>\s*(\{[\s\S]*?\})\s*(?:<\/tool_call>|$)|```(?:json)?\s*(\{[\s\S]*?\})\s*```|^\s*(\{[\s\S]*\})\s*$/g;
@@ -2933,7 +2944,7 @@ dialog input:focus { border-color: #4a4f8a; }
     const rest = content.replace(TEXT_CALL, (all, a, b, c) => {
       try {
         const j = JSON.parse(a || b || c);
-        const name = String(j?.name ?? j?.function?.name ?? ""), args = j?.arguments ?? j?.parameters ?? j?.function?.arguments;
+        const name = toolName(j?.name ?? j?.function?.name), args = j?.arguments ?? j?.parameters ?? j?.function?.arguments;
         if (!Object.hasOwn(TOOLS, name) || !args) return all;
         calls.push({ id: "call_" + uid(), type: "function", function: { name, arguments: typeof args === "string" ? args : JSON.stringify(args) } });
         return "";
@@ -2941,8 +2952,7 @@ dialog input:focus { border-color: #4a4f8a; }
     });
     return { calls, rest: rest.trim() };
   }
-  // An earlier "I can't make pictures" (plain chat, or a robot turn from before it could) gets copied if it's sent back
-  // as the robot's own words.
+  // An earlier "I can't make pictures" (plain chat, or a robot turn from before it could).
   const CANT_PICTURE = /\b(can(no|['’])?t|unable to|not able to|(don['’]?t|do not) have the (ability|capability) to)\b[^.!?\n]{0,40}\b(create|generate|make|draw|produce|render)\b[^.!?\n]{0,30}\b(images?|pictures?|photos?|drawings?|illustrations?|art)\b/i;
 
   async function runAgent(text) {
@@ -2963,9 +2973,9 @@ dialog input:focus { border-color: #4a4f8a; }
     let past = chat.messages
       .filter((x) => !x.error && (!x.kind || x.kind === "agent-task" || (x.kind === "agent" && x.content)))
       .map(({ role, content }) => ({ role, content }));
-    // Leave out an earlier "I can't make pictures", with the ask before it so the turns still alternate.
-    const cant = (x) => x?.role === "assistant" && CANT_PICTURE.test(textOf(x.content));
-    past = past.filter((x, i) => !cant(x) && !(x.role === "user" && cant(past[i + 1])));
+    // Send an earlier "I can't make pictures" back only as a note that no picture was made, so the model doesn't copy it
+    // and "try again" still knows what the picture was.
+    past = past.map((x) => x.role === "assistant" && CANT_PICTURE.test(textOf(x.content)) ? { role: "assistant", content: "(No picture was made that time.)" } : x);
     // On this computer, only the recent turns: the instructions and tools already fill ~2,600 of Ollama's 4,096 tokens,
     // and running past that makes Ollama drop its cached copy of them (slow again) or the task itself.
     if (model.local) past = recentTurns(past);
@@ -3004,7 +3014,7 @@ dialog input:focus { border-color: #4a4f8a; }
         let calls = (reply.tool_calls || []).map((c) => ({
           id: c.id || "call_" + uid(),
           type: "function",
-          function: { name: c.function?.name, arguments: typeof c.function?.arguments === "string" ? c.function.arguments : JSON.stringify(c.function?.arguments || {}) },
+          function: { name: toolName(c.function?.name), arguments: typeof c.function?.arguments === "string" ? c.function.arguments : JSON.stringify(c.function?.arguments || {}) },
         }));
         if (!calls.length && content.includes("{")) {
           const t = callsInText(content);
