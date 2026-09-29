@@ -741,7 +741,7 @@ dialog input:focus { border-color: #4a4f8a; }
     const q = els.search.value.trim().toLowerCase();
     const list = chats
       .filter((c) => !q || c.title.toLowerCase().includes(q) ||
-        c.messages.some((m) => textOf(m.content).toLowerCase().includes(q)))
+        c.messages.some((m) => textOf(m.content ?? m.prompt ?? "").toLowerCase().includes(q)))
       .sort((a, b) => b.updated - a.updated);
     els.chatList.innerHTML = "";
     if (!list.length) {
@@ -778,6 +778,8 @@ dialog input:focus { border-color: #4a4f8a; }
   }
 
   function openChat(id) {
+    // Clicking the chat that's already open leaves the robot's task running.
+    if (id === currentId && controller && agentMsg?.running) { els.app.classList.remove("nav-open"); return; }
     if (controller) controller.abort();
     currentId = id;
     renderThread();
@@ -1944,7 +1946,7 @@ dialog input:focus { border-color: #4a4f8a; }
   // 3D models use the user's limited free GPU time, so the robot only makes one when the task asks for it.
   const WANTS_3D = /\b3\s?-?d\b|\bthree[- ]?d|\bstl\b|\bglb\b|\bprint|\bmodel|figurine|sculpt|\bmesh\b|miniature|\btoy\b/i;
   // "Turn it into 3D", "make this picture 3D": the task means an image that's already there.
-  const MEANS_OLD_IMAGE = /\b(turn|make|convert|change|print)\s+(it|this|that)\b|\b(it|this|that)\s+(in)?to\s+(an?\s+)?(3\s?-?d|stl|model)|\b(the|my|last|same|previous|this|that)\s+(image|picture|photo|pic|drawing)\b/i;
+  const MEANS_OLD_IMAGE = /\b(turn|make|convert|change|print)\s+(it|this|that)\b|\b(it|this|that)\s+(in)?to\s+(an?\s+)?(3\s?-?d|stl|model)|\b(the|my|last|same|previous|this|that)\s+(image|picture|photo|pic|drawing)\b|\bof (it|this|that|them)\b|\b(you|u) (just )?(drew|made|generated|created)\b/i;
   function newCreation(prompt, image) {
     const c = { id: uid(), prompt };
     if (image) c.image = image;
@@ -1963,7 +1965,26 @@ dialog input:focus { border-color: #4a4f8a; }
     return out;
   }
   const modelSrc = (c) => liveModels.get(c.id) || c.model3d;
-  const failed = (c, lead) => new Error((c.error || lead).replace(/^QUOTA:/, ""));
+  // A picture or model that failed on Hugging Face's side: the reason is for the user, so the step keeps it (s.why) and
+  // the answer says it plainly (a small model makes up a reason, or promises a retry it never makes).
+  const failed = (c, lead, s) => { const why = (c.error || lead).replace(/^QUOTA:/, ""); s.why = why; return new Error(why); };
+  // Once Hugging Face says the free GPU time is used up, trying again in the same task only fails again.
+  const gpuOut = () => agentMsg?.steps.find((x) => x.why && /GPU time/.test(x.why))?.why;
+  function stopIfGpuOut(s) {
+    const why = gpuOut();
+    if (why) { s.why = why; throw new Error(why); }
+  }
+  // What the task says when it ends on a failed picture or 3D model.
+  function makeFailText(steps) {
+    const made = steps.filter((s) => s.type === "tool" && /^(make_image|make_3d_model)$/.test(s.name));
+    const last = made[made.length - 1];
+    if (!last || last.status !== "error" || !last.why) return "";
+    const lead = last.name === "make_image" ? "I couldn't make the picture." : "I couldn't make the 3D model.";
+    return /^couldn['’]t/i.test(last.why) ? last.why : `${lead} ${last.why}`;
+  }
+  // Small models sometimes put the prompt under another key (description, image_prompt, text…).
+  const PROMPT_KEYS = ["description", "image_prompt", "text", "query", "subject", "object", "input", "caption", "image_description"];
+  const promptOf = (a) => String(a?.prompt || PROMPT_KEYS.map((k) => a?.[k]).find((v) => typeof v === "string" && v.trim()) || "");
 
   TOOLS.make_image = {
     label: "Make an image",
@@ -1972,15 +1993,16 @@ dialog input:focus { border-color: #4a4f8a; }
       description: "Draw a picture with a free AI image model. Write the prompt in English.",
       parameters: { type: "object", properties: { prompt: { type: "string", description: "What the picture shows, in detail" } }, required: ["prompt"] },
     },
-    show: (a) => clip(String(a.prompt || ""), 80),
+    show: (a) => clip(promptOf(a), 80),
     run: async (a, s) => {
-      const prompt = String(a.prompt || "").trim().slice(0, 500);
+      const prompt = promptOf(a).trim().slice(0, 500);
       if (!prompt) throw new Error("say what the picture should show");
+      stopIfGpuOut(s);
       const c = newCreation(prompt);
       s.cid = c.id;
       rerenderAgent(agentMsg);
       await makeImage(c);
-      if (!c.image) throw failed(c, "no image came back");
+      if (!c.image) throw failed(c, "no image came back", s);
       return `Made the picture with ${c.imageBy}. The user sees it in the steps, with a Make 3D model button.`;
     },
   };
@@ -1991,13 +2013,21 @@ dialog input:focus { border-color: #4a4f8a; }
       description: "Make a 3D model (for 3D printing) from a new picture of 'prompt', or from the last image if prompt is left out.",
       parameters: { type: "object", properties: { prompt: { type: "string", description: "One object, e.g. 'a small dragon figurine'" } } },
     },
-    show: (a) => clip(String(a.prompt || "the last image"), 80),
+    show: (a) => clip(promptOf(a) || "the last image", 80),
     run: async (a, s) => {
-      if (!WANTS_3D.test(agentTask)) throw new Error("the user didn't ask for 3D, so no model was made (it uses their free GPU time). Offer to make one");
-      const prompt = String(a.prompt || "").trim().slice(0, 400);
+      // "Yes" to the robot's own 3D offer ("Want me to turn it into a 3D model?") counts as asking for 3D.
+      const ms = agentChat()?.messages || [], prev = ms[ms.indexOf(agentMsg) - 2];
+      const saidYes = prev?.kind === "agent" && /\b(3\s?-?d|three[- ]?d|stl|print\w*)\b[^.!?\n]*\?/i.test(prev.content || "") &&
+        /^\s*(y|yes|yeah|yep|ya|sure|ok(ay)?|pls|please|do it|go ahead|go for it|make it|let'?s do it|sounds good|why not|of course|absolutely)\b/i.test(agentTask);
+      if (!WANTS_3D.test(agentTask) && !saidYes) throw new Error("the user didn't ask for 3D, so no model was made (it uses their free GPU time). If they want a picture, call make_image now; otherwise offer to make a 3D model");
+      stopIfGpuOut(s);
+      const prompt = promptOf(a).trim().slice(0, 400);
       const ready = (x) => x.image && !x.status;
-      // An image from this task (made or attached) comes first; then a new picture, unless the task means an old one.
+      // An image from this task (made or attached) comes first; then the picture the offer was about;
+      // then a new picture, unless the task means an old one.
       let c = (agentMsg.creations || []).filter(ready).pop();
+      const offered = saidYes && (prev.creations || []).filter(ready).pop();
+      if (!c && offered) { c = newCreation(offered.prompt || "", offered.image); if (offered.imageBy) c.imageBy = offered.imageBy; }
       if (!c && agentImages.length) c = newCreation("", agentImages[agentImages.length - 1]);
       const old = () => chatCreations().find(ready);
       if (!c && !(prompt && !MEANS_OLD_IMAGE.test(agentTask)) && old()) {
@@ -2013,12 +2043,12 @@ dialog input:focus { border-color: #4a4f8a; }
         s.cid = c.id;
         rerenderAgent(agentMsg);
         await makeImage(c);
-        if (!c.image) throw failed(c, "no picture came back to build from");
+        if (!c.image) throw failed(c, "no picture came back to build from", s);
       }
       s.cid = c.id;
       rerenderAgent(agentMsg);
       await make3D(c);
-      if (!c.model3d) throw failed(c, "no 3D model came back");
+      if (!c.model3d) throw failed(c, "no 3D model came back", s);
       return `Made a 3D model (${c.note}). The user sees it spinning in the steps, with Download .stl (3D print) and Download .glb buttons.`;
     },
   };
@@ -2608,7 +2638,7 @@ dialog input:focus { border-color: #4a4f8a; }
     });
     const list = loadLog().filter((r) => r.id !== m.id);
     if (steps.length) list.unshift({ id: m.id, chat: chat.id, task: clip(task, 160), at, steps });
-    store.set("actions", list.slice(0, LOG_MAX));
+    store.set("actions", list.sort((a, b) => b.at - a.at).slice(0, LOG_MAX));   // a stopped picture that finishes later keeps its place
     if (els.actionLog.open) renderLog();
   }
   function renderLog() {
@@ -2699,7 +2729,7 @@ dialog input:focus { border-color: #4a4f8a; }
     body.dataset.mid = m.id;
     let html = `<div class="agent-run"><div class="task-label">Agent</div><ol class="steps">`;
     for (const s of m.steps) html += stepHtml(s);
-    if (m.running && !m.steps.some((s) => s.status === "ask")) html += `<li class="step running"><div class="step-title"><span class="spinner"></span>${m.steps.length ? "Deciding the next step…" : "Planning…"}</div></li>`;
+    if (m.running && !m.steps.some((s) => s.status === "ask" || s.status === "running")) html += `<li class="step running"><div class="step-title"><span class="spinner"></span>${m.steps.length ? "Deciding the next step…" : "Planning…"}</div></li>`;
     html += `</ol>`;
     if (m.error) html += `<div class="error">${escapeHtml(m.error)}</div>`;
     if (m.content) html += `<div class="md">${renderMd(m.content)}</div>`;
@@ -2889,8 +2919,31 @@ dialog input:focus { border-color: #4a4f8a; }
 
   function parseArgs(raw) {
     if (raw && typeof raw === "object") return raw;
-    try { return JSON.parse(raw || "{}") || {}; } catch { return { _raw: String(raw) }; }
+    try {
+      let v = JSON.parse(raw || "{}");
+      if (typeof v === "string") v = JSON.parse(v);   // arguments sent encoded twice
+      return v && typeof v === "object" ? v : {};
+    } catch { return { _raw: String(raw) }; }
   }
+  // Ollama only turns a reply into a tool call when it starts with <tool_call>, so a call Qwen writes as plain JSON
+  // (or in a ```json block) stays text. Only an object naming one of BOON's tools, with its arguments, counts.
+  const TEXT_CALL = /<tool_call>\s*(\{[\s\S]*?\})\s*(?:<\/tool_call>|$)|```(?:json)?\s*(\{[\s\S]*?\})\s*```|^\s*(\{[\s\S]*\})\s*$/g;
+  function callsInText(content) {
+    const calls = [];
+    const rest = content.replace(TEXT_CALL, (all, a, b, c) => {
+      try {
+        const j = JSON.parse(a || b || c);
+        const name = String(j?.name ?? j?.function?.name ?? ""), args = j?.arguments ?? j?.parameters ?? j?.function?.arguments;
+        if (!Object.hasOwn(TOOLS, name) || !args) return all;
+        calls.push({ id: "call_" + uid(), type: "function", function: { name, arguments: typeof args === "string" ? args : JSON.stringify(args) } });
+        return "";
+      } catch { return all; }
+    });
+    return { calls, rest: rest.trim() };
+  }
+  // An earlier "I can't make pictures" (plain chat, or a robot turn from before it could) gets copied if it's sent back
+  // as the robot's own words.
+  const CANT_PICTURE = /\b(can(no|['’])?t|unable to|not able to|(don['’]?t|do not) have the (ability|capability) to)\b[^.!?\n]{0,40}\b(create|generate|make|draw|produce|render)\b[^.!?\n]{0,30}\b(images?|pictures?|photos?|drawings?|illustrations?|art)\b/i;
 
   async function runAgent(text) {
     if (!text) return;
@@ -2910,6 +2963,9 @@ dialog input:focus { border-color: #4a4f8a; }
     let past = chat.messages
       .filter((x) => !x.error && (!x.kind || x.kind === "agent-task" || (x.kind === "agent" && x.content)))
       .map(({ role, content }) => ({ role, content }));
+    // Leave out an earlier "I can't make pictures", with the ask before it so the turns still alternate.
+    const cant = (x) => x?.role === "assistant" && CANT_PICTURE.test(textOf(x.content));
+    past = past.filter((x, i) => !cant(x) && !(x.role === "user" && cant(past[i + 1])));
     // On this computer, only the recent turns: the instructions and tools already fill ~2,600 of Ollama's 4,096 tokens,
     // and running past that makes Ollama drop its cached copy of them (slow again) or the task itself.
     if (model.local) past = recentTurns(past);
@@ -2932,7 +2988,7 @@ dialog input:focus { border-color: #4a4f8a; }
     const messages = [{ role: "system", content: agentPrompt() }, ...past, { role: "user", content: said }];
     let pastLeft = past.length;
     const started = Date.now();
-    let nudged = false;
+    let nudged = false, makeNudges = 0;
     setBusy(true);
     controller = new AbortController();
     try {
@@ -2945,11 +3001,15 @@ dialog input:focus { border-color: #4a4f8a; }
         let thought = reply.reasoning || reply.reasoning_content || reply.thinking || "";
         content = content.replace(/<think>([\s\S]*?)(<\/think>|$)/g, (_, t) => { thought += t; return ""; }).trim();
         if (thought.trim()) m.steps.push({ type: "think", text: thought.trim() });
-        const calls = (reply.tool_calls || []).map((c) => ({
+        let calls = (reply.tool_calls || []).map((c) => ({
           id: c.id || "call_" + uid(),
           type: "function",
           function: { name: c.function?.name, arguments: typeof c.function?.arguments === "string" ? c.function.arguments : JSON.stringify(c.function?.arguments || {}) },
         }));
+        if (!calls.length && content.includes("{")) {
+          const t = callsInText(content);
+          if (t.calls.length) { calls = t.calls; content = t.rest; }
+        }
         if (!calls.length) {
           // Small models sometimes finish a sum in their head or claim a reminder they never set.
           // Push back once so the answer comes from a tool.
@@ -2977,9 +3037,35 @@ dialog input:focus { border-color: #4a4f8a; }
           const noAccess = /\b(don['’]?t|do not) (have|know)\b[^.]*\b(access|your|that)\b|\b(can['’]?t|cannot|unable to|not able to) access\b|\bno access to\b/i.test(content);
           const asksRecall = !makes && ((recallAsk && aboutSaved) || (/\bmy\b/i.test(text) && noAccess));
           // And a picture or 3D model it said it can't make, or said it made, without calling the tool.
-          const wantsMake = /\b(draw|sketch|paint|pictures?|images?|photos?|illustrations?|logos?|wallpapers?|3\s?-?d|stl|figurines?)\b/i.test(text)
-            && /\b(make|create|draw|generate|design|paint|sketch|render|turn|convert|build|print|give me|show me)\b/i.test(text) && !/^\s*(how|why|what)\b/i.test(text);
-          const triedMake = m.steps.some((s) => s.type === "tool" && /^(make_image|make_3d_model)$/.test(s.name));
+          const makeAsk = (t) => /\b(draw|sketch|paint|pics?|pictures?|images?|photos?|illustrations?|logos?|wallpapers?|3\s?-?d|stl|figurines?)\b/i.test(t)
+            && /\b(make|create|draw|generate|design|paint|sketch|render|turn|convert|build|print|give me|show me)\b/i.test(t) && !/^\s*(how|why|what)\b/i.test(t);
+          // "Try again" or "another one" right after a picture task, or "yes" to its offer or refusal, is the same ask.
+          const prev = (kind) => chat.messages.filter((x) => x.kind === kind).slice(-2, -1)[0]?.content || "";
+          const again = /^\s*((ok(ay)?|now|please|pls|can you|could you|just)[\s,]+)*(try( it)?( again| now)?|again|retry|redo( it)?|do it( again| now)?|(make |do )?another( one)?|one more( time)?)[\s,.!?]*(please|pls|now)?[\s.!?]*$/i.test(text);
+          const yes = /^\s*(yes|yeah|yep|ya|sure|ok(ay)?|pls|please|go ahead|go for it|make it|just do it|(yes,? )?you can( do it)?)\b[\s,.!]*(pls|please|do it|go ahead|make it)?[\s.!]*$/i.test(text)
+            && /\b(images?|pictures?|draw|drawing|make|create|generate)\b[^.!?]*\?|can(no|[’']|)t|unable|couldn/i.test(prev("agent"));
+          const wantsMake = makeAsk(text) || ((again || yes) && makeAsk(prev("agent-task")))
+            || /\b(i want|i'?d like|gimme|can i (get|have)|could i (get|have))\b[^.?!]{0,30}\b(pics?|pictures?|images?|drawings?)\s+of\b/i.test(text)
+            || /그려|(그림|이미지)[^.?!]{0,20}(만들|생성)/.test(text)
+            || /^\s*an?\s[^.?!]*,\s*(digital art|oil painting|watercolou?r|pixel art|anime style|photorealistic|concept art|cinematic lighting)\b/i.test(text)
+            // Looser asks ("img of a dragon", "make a drawing of a cat", "make me a pfp"): only while no tool has run in this task,
+            // and not about a photo they already have ("photo of my homework, solve q3").
+            || (!m.steps.some((s) => s.type === "tool")
+              && /^\s*(an?\s+)?(pics?|imgs?|images?|pictures?|photos?|drawings?)\s+of\s+(?!(my|our|this|that|the|these|those|his|her|their)\b)|\b(make|create|draw|generate|gen|design|paint|render|give me|i want)\s+(me\s+)?(an?\s+|another\s+|some\s+)?((?!(my|your|our|this|that|the)\b)\w+\s+){0,2}(pics?|imgs?|images?|pictures?|photos?|drawings?|paintings?|pfps?|avatars?|stickers?|cartoons?)\b|\b(drwa|darw)\b/i.test(text)
+              && !/^\s*(how|why|what|which|where|when|is|are|do|does|explain)\b|\b(ideas?|list|to-?dos?|remind|notes?|solve|homework)\b/i.test(text));
+          // The 3D tool's "didn't ask for 3D" isn't a try at a picture; a real failure (GPU time, FLUX down) is, so no retry.
+          const guardHit = m.steps.some((s) => s.type === "tool" && /didn.t ask for 3D/.test(s.result || ""));
+          const triedMake = m.steps.some((s) => s.type === "tool" && /^(make_image|make_3d_model)$/.test(s.name) && !/didn.t ask for 3D/.test(s.result || ""));
+          // Another tool already did the task ("remind me to print the pictures at 5"), or it's a how-to question: no picture.
+          const didOther = m.steps.some((s) => s.type === "tool" && s.status === "done" && !/^(make_image|make_3d_model|save_3d_file)$/.test(s.name));
+          const howTo = /\b(show|tell|teach|explain)( me| us)? how (to|do|does|can|i|you)\b/i.test(text);
+          // A question back ("What style?") may end the task, but not a refusal, words instead of a picture, or a picture it claims it made.
+          const refusedMake = refused || /n['’]t\b|\bnot\b|\bbeyond\b|\btext[- ](only|based)\b|\binstead\b|\bdescri(be|ption)\b/i.test(content);
+          const offersMake = /!\[|https?:\/\/|\bhere(['’]s| is| you go| it is)\b|\bi(['’]ve| have)? (made|created|drawn|drew|generated)\b|^\s*done\b|\b(generate|create|make|draw|produce|render)\w* (an? |the |your |that |this )?(images?|pictures?|photos?|drawings?|illustrations?|art)\b/i.test(content);
+          const makeNudge = wantsMake && !triedMake && !didOther && !howTo && (refusedMake || offersMake || guardHit || !content.includes("?"))
+            ? makeNudges ? 'BOON can make pictures. Call the make_image tool now with {"prompt": "<what to draw, in English>"}; don\'t answer in text.'
+              : "You haven't made it yet, and you can: call make_image now (or make_3d_model if they asked for 3D)."
+            : "";
           const nudge = /\d\s*[÷\/×*+x-]\s*\d[\d,.]*\s*=\s*[$₩€£]?\s*\d/.test(content)
             ? "You wrote arithmetic in your answer. Work it out with the calculator tool instead, then give the final answer."
             : wantsReminder && !triedReminder && !(already && looked(/^list_reminders$/)) && !content.includes("?") && claimsReminder.test(content) && !refused
@@ -2988,15 +3074,17 @@ dialog input:focus { border-color: #4a4f8a; }
                 ? "You haven't saved it yet. Call save_note (for a note) or add_todo (for a to-do) now."
                 : asksRecall && !m.steps.some((s) => s.type === "tool")
                   ? "Before answering, look it up: call find_notes with a few key words (e.g. \"locker code\"), or list_todos or list_reminders if it's about tasks or reminders."
-                  : wantsMake && !triedMake && (refused || !content.includes("?"))
-                    ? "You haven't made it yet, and you can: call make_image now (or make_3d_model if they asked for 3D)."
-                    : "";
-          if (nudge && !nudged) {
-            nudged = true;
+                  : makeNudge;
+          // One push back per task, and up to two for a picture.
+          if (nudge && (nudge === makeNudge ? makeNudges < 2 : !nudged)) {
+            if (nudge === makeNudge) makeNudges++; else nudged = true;
             messages.push({ role: "assistant", content }, { role: "user", content: nudge });
             continue;
           }
-          m.content = hideIds(content, m.steps) || "_Done._";
+          // A failed picture or model is explained in BOON's own words (anything else the robot did follows).
+          const failNote = makeFailText(m.steps), ownWords = hideIds(content, m.steps);
+          m.content = failNote ? failNote + (didOther && ownWords ? "\n\n" + ownWords : "")
+            : ownWords || (m.steps.some((s) => s.type === "tool" && s.status === "done") ? "_Done._" : "_The model didn't answer. Try again, or say it another way._");
           break;
         }
         messages.push({ role: "assistant", content, tool_calls: calls });
@@ -3020,7 +3108,11 @@ dialog input:focus { border-color: #4a4f8a; }
               else { s.status = "denied"; s.result = "You said no, so BOON didn't do it."; }
             }
             if (s.status === "running") {
-              s.result = String(await (tool.slow ? untilStopped(tool.run(args, s)) : tool.run(args, s)));
+              const work = tool.run(args, s);
+              // Stop doesn't cancel a picture or 3D model (see untilStopped): when it finishes anyway, its step says so.
+              if (tool.slow) Promise.resolve(work).then((res) => ({ status: "done", result: String(res) }), (e) => ({ status: "error", result: e.message || String(e) }))
+                .then((end) => { if (s.result === "stopped") { Object.assign(s, end); touch(m); rerenderAgent(m); logRun(m, chat, text, started); } });
+              s.result = String(await (tool.slow ? untilStopped(work) : work));
               s.status = "done";
             }
           } catch (err) {
