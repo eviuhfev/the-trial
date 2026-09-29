@@ -57,7 +57,19 @@ The free Spaces share GPU time, so they have a daily limit. Adding a free Huggin
 Tap the robot button next to the cube to switch the composer into Agent mode. Give BOON a task and it works
 through it with tools, showing every step as a timeline: what it thought, which tool it used, what came back,
 then the answer. Today's tools are a calculator, a bill splitter (tip, tax, people), the date and time, counting days
-between dates, adding days to a date, and reminders; more come later.
+between dates, adding days to a date, reminders, notes, to-dos, pictures and 3D models; more come later.
+
+**Pictures and 3D models.** "Draw a cat astronaut" makes a picture, "make a 3D model of a dragon I can print" makes a
+picture of it and turns that into a 3D model, "turn it into 3D" uses the last picture in the chat (or one you attach),
+and "download the stl" saves the model to your Downloads folder (upright, 100 mm on its longest side). They use the same
+free models as Create mode and show up under the step that made them, with Create mode's buttons. BOON only makes a
+3D model when you ask for 3D, a model or printing, since it uses your free GPU time. Pressing pause stops the task right
+away; a picture or model that was already being made still shows up when it's done.
+
+**Action log.** The Action log button in the sidebar lists everything the robot did with its tools, task by task,
+newest first: which tool, what it was used on, and what came back (or that it failed, or that you pressed Deny).
+**Open chat** jumps to that task, and **Clear log** empties it. It's saved in this browser only, for the last 100 tasks,
+and never keeps the pictures themselves.
 
 **Reminders.** "Remind me at 8:52 am to study" or "remind me in 10 minutes to stretch" sets a reminder that rings at that
 exact minute: a chime, a pop-up with Snooze and Done, and a system notification if you allow them. The Reminders button
