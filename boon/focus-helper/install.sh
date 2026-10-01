@@ -12,7 +12,7 @@ dir="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
 file="$dir/com.boon.focus.json"
 
 if [ "${1:-}" = "--uninstall" ]; then
-  rm -f "$file" "$app/boon-focus-host" "$app/watch.js"
+  rm -f "$file" "$app/boon-focus-host" "$app/watch.js" "$app/actions.js"
   rmdir "$app" 2>/dev/null || true
   echo "BOON Focus helper removed."
   exit 0
@@ -27,7 +27,7 @@ case "$id" in *[!a-p]* | '') echo "That isn't an add-on id: $id" >&2; exit 1 ;; 
 
 mkdir -p "$app" "$dir"
 # Copy, then rename over the old file, so a helper that is running right now keeps reading its own copy.
-for f in boon-focus-host watch.js; do
+for f in boon-focus-host watch.js actions.js; do
   cp "$here/$f" "$app/.$f.new"
   chmod 755 "$app/.$f.new"
   mv -f "$app/.$f.new" "$app/$f"

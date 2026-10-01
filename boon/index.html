@@ -2229,13 +2229,13 @@ dialog input:focus { border-color: #4a4f8a; }
   let lockIncognito = true;       // BOON Focus may run in Incognito windows
   let extSeq = 0;
   const extWaiting = new Map();
-  function ext(msg) {
+  function ext(msg, timeoutMs = 4000) {
     return new Promise((resolve) => {
       if (!hasLock()) return resolve(null);
       const id = ++extSeq;
       extWaiting.set(id, resolve);
       window.postMessage({ source: "boon-page", id, msg }, "*");
-      setTimeout(() => { if (extWaiting.delete(id)) resolve(null); }, 4000);
+      setTimeout(() => { if (extWaiting.delete(id)) resolve(null); }, timeoutMs);
     });
   }
   addEventListener("message", (e) => {
@@ -2623,6 +2623,89 @@ dialog input:focus { border-color: #4a4f8a; }
       };
       els.noteList.appendChild(row);
     }
+  }
+
+  // ---------- Mac actions: reminders, calendar events, opening apps ----------
+  // These run on the Mac through the BOON Focus add-on's native helper (boon/focus-helper), so they need the
+  // add-on installed and set up with install.sh, even outside a focus session. Only offered to the model when the
+  // add-on is present (hasLock()), so a browser without it just keeps the in-browser set_reminder. BOON asks
+  // Allow/Deny first, same as delete_note and the others.
+  const MAC_APPS = ["Notes", "Reminders", "Calendar", "Music", "Safari", "Messages", "Mail", "Maps", "Photos", "Calculator", "FaceTime", "Spotify"];
+  // reminderTime() only knows YYYY-MM-DD/today/tomorrow; dueDay() (used by add_todo) also turns a weekday into one.
+  const macArgs = (a) => (a.date ? { ...a, date: dueDay(a.date) } : a);
+  async function macAction(type, args) {
+    if (!hasLock()) throw new Error("BOON's Mac helper needs the BOON Focus add-on installed and set up.");
+    const res = await ext({ type, ...args }, 20000);
+    if (!res) throw new Error("No answer from the Mac in 20 seconds. If a system pop-up asked to allow Reminders or Calendar, click Allow there, then try again.");
+    if (!res.ok) throw new Error(res.error || "Couldn't do that on the user's Mac.");
+    return res;
+  }
+  if (hasLock()) {
+    TOOLS.mac_reminder = {
+      label: "Add a Mac reminder",
+      spec: {
+        description: "Add a reminder to the user's Mac Reminders app. It rings there even if BOON or Chrome is closed. " +
+          "Give either 'time' (with optional 'date') or 'in_minutes', the same as set_reminder.",
+        parameters: { type: "object", properties: {
+          text: { type: "string", description: "What to remind them about" },
+          time: { type: "string", description: "Clock time with minutes, e.g. '8:52 am' or '20:30'" },
+          date: { type: "string", description: "Optional YYYY-MM-DD, 'tomorrow' or a weekday" },
+          in_minutes: { type: "number", description: "Instead of time: minutes from now" },
+          list: { type: "string", description: "Optional Reminders list name" },
+        }, required: ["text"] },
+      },
+      show: (a) => [a.in_minutes ? `in ${a.in_minutes} min` : [a.date, a.time].filter(Boolean).join(" "), a.text].filter(Boolean).join(" · "),
+      ask: (a) => { const at = reminderTime(macArgs(a)); return { q: `Add "${String(a.text || "").trim() || "Reminder"}" to the Mac Reminders app, ${fmtWhen(at)}?` }; },
+      run: async (a) => {
+        const text = String(a.text || "").trim().slice(0, 200) || "Reminder";
+        const at = reminderTime(macArgs(a));
+        await macAction("create_reminder", { title: text, due: new Date(at).toISOString(), list: a.list ? String(a.list).trim().slice(0, 60) : undefined });
+        return `Added "${text}" to the Mac Reminders app, ${fmtWhen(at)}.`;
+      },
+    };
+    TOOLS.mac_calendar_event = {
+      label: "Add a Calendar event",
+      spec: {
+        description: "Add an event to the user's Mac Calendar app. Give either 'time' (with optional 'date') or 'in_minutes', like set_reminder.",
+        parameters: { type: "object", properties: {
+          text: { type: "string", description: "The event's title" },
+          time: { type: "string", description: "Clock time with minutes, e.g. '3:00 pm'" },
+          date: { type: "string", description: "Optional YYYY-MM-DD, 'tomorrow' or a weekday" },
+          in_minutes: { type: "number", description: "Instead of time: minutes from now" },
+          minutes_long: { type: "number", description: "How long it lasts, in minutes (default 30)" },
+          calendar: { type: "string", description: "Optional calendar name" },
+        }, required: ["text"] },
+      },
+      show: (a) => [[a.date, a.time].filter(Boolean).join(" "), a.text].filter(Boolean).join(" · "),
+      ask: (a) => { const at = reminderTime(macArgs(a)); return { q: `Add "${String(a.text || "").trim() || "Event"}" to the Mac Calendar, ${fmtWhen(at)}?` }; },
+      run: async (a) => {
+        const text = String(a.text || "").trim().slice(0, 200) || "Event";
+        const at = reminderTime(macArgs(a));
+        const len = Math.max(5, Math.min(480, Number(a.minutes_long) || 30));
+        const end = at + len * 60000;
+        await macAction("create_event", { title: text, start: new Date(at).toISOString(), end: new Date(end).toISOString(), calendar: a.calendar ? String(a.calendar).trim().slice(0, 60) : undefined });
+        return `Added "${text}" to the Mac Calendar, ${fmtWhen(at)} to ${fmtWhen(end)}.`;
+      },
+    };
+    TOOLS.open_mac_app = {
+      label: "Open a Mac app",
+      spec: {
+        description: `Open one of these apps on the user's Mac: ${MAC_APPS.join(", ")}.`,
+        parameters: { type: "object", properties: { app: { type: "string", enum: MAC_APPS } }, required: ["app"] },
+      },
+      show: (a) => a.app || "",
+      ask: (a) => {
+        const app = MAC_APPS.find((x) => x.toLowerCase() === String(a.app || "").trim().toLowerCase());
+        if (!app) throw new Error(`BOON can only open: ${MAC_APPS.join(", ")}`);
+        return { q: `Open ${app} on the user's Mac?` };
+      },
+      run: async (a) => {
+        const app = MAC_APPS.find((x) => x.toLowerCase() === String(a.app || "").trim().toLowerCase());
+        if (!app) throw new Error(`BOON can only open: ${MAC_APPS.join(", ")}`);
+        await macAction("open_app", { app });
+        return `Opened ${app}.`;
+      },
+    };
   }
 
   // ----- action log -----

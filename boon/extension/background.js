@@ -461,6 +461,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       await sweep(s);
       return { ok: true, start: s.start, end: s.end, minEnd: s.minEnd, mode };
     }
+    if (type === "create_reminder" || type === "create_event" || type === "open_app") {
+      const { type: _drop, ...args } = msg;
+      return await runMacAction(type, args);
+    }
     return null;
   })().then(reply, (e) => reply({ ok: false, error: String(e?.message || e) }));
   return true;
@@ -590,6 +594,44 @@ function stopHelper() {
 }
 // The add-on was reloaded, Chrome restarted, or Chrome woke this script up mid-session: start the helper again.
 loadSession().then((s) => { if (s && Date.now() < s.end) startHelper(s); });
+
+// ----- Mac actions: a Reminders item, a Calendar event, or opening an app, for BOON's robot -----
+// A second, separate connection to the same helper program, used any time (not only during focus): each call opens
+// the port if needed, sends one {id, action, ...} message and waits for its matching reply (the host's end runs
+// everything through actions.js and answers once). The port is left open for the next action; if it drops (the
+// helper not installed, or it closes the connection), the next action just opens a fresh one.
+let actionPort = null, actionWaiting = new Map(), actionSeq = 0;
+function actionConnect() {
+  if (actionPort) return actionPort;
+  if (!chrome.runtime.connectNative) return null;
+  let port;
+  try { port = chrome.runtime.connectNative(HELPER); } catch { return null; }
+  actionPort = port;
+  port.onMessage.addListener((msg) => {
+    const done = actionWaiting.get(msg?.id);
+    if (done) { actionWaiting.delete(msg.id); done(msg); }
+  });
+  port.onDisconnect.addListener(() => {
+    void chrome.runtime.lastError;
+    if (actionPort !== port) return;
+    actionPort = null;
+    for (const done of actionWaiting.values()) done({ ok: false, error: "The Mac helper closed the connection. Run install.sh in boon/focus-helper, then reload this add-on." });
+    actionWaiting.clear();
+  });
+  return port;
+}
+function runMacAction(action, args) {
+  return new Promise((resolve) => {
+    const port = actionConnect();
+    if (!port) return resolve({ ok: false, error: "BOON's Mac helper isn't installed. Run install.sh in boon/focus-helper, then reload this add-on." });
+    const id = ++actionSeq;
+    actionWaiting.set(id, resolve);
+    try { port.postMessage({ id, action, ...args }); }
+    catch { actionWaiting.delete(id); resolve({ ok: false, error: "Couldn't reach the Mac helper." }); }
+    // Generous: the first Reminders or Calendar use shows a one-time macOS permission pop-up that waits on a click.
+    setTimeout(() => { if (actionWaiting.delete(id)) resolve({ ok: false, error: "The Mac helper didn't answer in time. If a permission pop-up appeared, click Allow there and try again." }); }, 18000);
+  });
+}
 
 // ----- full screen -----
 // The work window goes full screen for the session, so on a Mac it has a desktop of its own and nothing else

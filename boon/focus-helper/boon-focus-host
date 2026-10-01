@@ -6,6 +6,12 @@
 # stuck Chrome can't keep other apps hidden. When focus ends, or the add-on is turned off or reloaded, or Chrome
 # quits, Chrome closes this script's input: it stops watch.js and exits. If watch.js stops by itself, this exits
 # too, so the add-on can start a fresh one later.
+#
+# The add-on also uses a second, separate connection to this same program for Mac actions (a Reminders item, a
+# Calendar event, opening an app) for BOON's robot: a {"id":N,"action":"create_reminder"/"create_event"/"open_app",
+# ...} message runs once, right away, through actions.js, and gets one framed JSON reply back ({"id":N,"ok":true,
+# ...} or {"id":N,"ok":false,"error":...}). It never touches the focus watcher below, so focus and actions can run
+# at the same time, each in its own connection.
 main() {
   here="$(cd "$(dirname "$0")" && pwd)"
   osa="${BOON_FOCUS_OSASCRIPT:-/usr/bin/osascript}"
@@ -28,6 +34,19 @@ main() {
     case "$len" in '' | *[!0-9]*) break ;; esac
     [ "$len" -ge 1 ] && [ "$len" -le 4096 ] || break
     msg=$(dd bs=1 count="$len" 2>/dev/null)
+    # A Mac-action request answers once and doesn't touch the focus watcher below.
+    case "$msg" in
+      *'"action"'*)
+        id=$(printf '%s' "$msg" | sed -n 's/.*"id" *: *\([0-9][0-9]*\).*/\1/p')
+        out=$("$osa" -l JavaScript "$here/actions.js" "$msg" 2>>"$log")
+        case "$out" in
+          \{*\}) : ;;
+          *) out="{\"id\":${id:-null},\"ok\":false,\"error\":\"the Mac helper couldn't run that\"}" ;;
+        esac
+        write_msg "$out"
+        continue
+        ;;
+    esac
     # watch.js stopped by itself (it only does when something is wrong): exit, and the add-on tries again later.
     if [ -n "$watcher" ] && ! kill -0 "$watcher" 2>/dev/null; then watcher=""; break; fi
     end=$(printf '%s' "$msg" | sed -n 's/.*"end" *: *\([0-9][0-9]*\).*/\1/p')
@@ -46,6 +65,13 @@ main() {
 stop() {
   [ -n "$watcher" ] && kill "$watcher" 2>/dev/null
   watcher=""
+}
+# Chrome's native-messaging framing: 4 bytes of length (this Mac's byte order), then that much JSON, written straight
+# to stdout (the only other things on this script's stdout: nothing; watch.js's own output goes to the log instead).
+write_msg() {
+  n=$(printf '%s' "$1" | wc -c | tr -d ' ')
+  printf "$(printf '\\x%02x\\x%02x\\x%02x\\x%02x' $((n & 255)) $(((n >> 8) & 255)) $(((n >> 16) & 255)) $(((n >> 24) & 255)))"
+  printf '%s' "$1"
 }
 # Everything runs inside main, and the script exits right after, so bash never reads this file again once it has
 # started (install.sh may replace it while it runs).
