@@ -1395,10 +1395,15 @@ dialog input:focus { border-color: #4a4f8a; }
   // The date and time ride along with each task (so Qwen3 doesn't guess 2023), not in the system prompt:
   // that keeps the system prompt and tool list identical from task to task, so Ollama reuses the work it
   // already did on them instead of rereading ~3,000 tokens (about 30 s on a MacBook Air) before every task.
-  // Set once (if at all) when the Mac tools are registered below, same as them, so the prompt still stays
-  // identical from task to task within a session (the Ollama prompt-cache rule above).
+  // Replaced once (if at all) when the Mac tools are registered below, same as them, so the prompt still stays
+  // identical from task to task within a session (the Ollama prompt-cache rule above). A plain append wasn't
+  // enough to move Qwen3 off set_reminder for an ordinary "remind me" ask: it has to replace that instruction,
+  // not just add another one after it (tested against the real model, see commit history).
+  let reminderBlock = "To remind the user, call set_reminder with the exact time including minutes (or in_minutes); " +
+    "list_reminders and cancel_reminder manage them. Never say a reminder is set unless set_reminder succeeded. " +
+    "For school work or anything important, pass important: true, a link if they named a site or doc, and focus_minutes (at least 10). ";
   let macAgentPrompt = "";
-  const agentPrompt = () => AGENT_PROMPT + macAgentPrompt;
+  const agentPrompt = () => AGENT_PROMPT.replace("{{REMINDER_BLOCK}}", reminderBlock) + macAgentPrompt;
   const withToday = (text) => {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, "0");
@@ -1414,9 +1419,7 @@ dialog input:focus { border-color: #4a4f8a; }
     "For tips and splitting a bill, use split_bill: split N ways means everyone's share of the bill plus the tip. " +
     "Never write arithmetic out in your answer. " +
     "days_between to count days between dates, and add_days for questions like \"what date is 100 days from today\". " +
-    "To remind the user, call set_reminder with the exact time including minutes (or in_minutes); list_reminders and cancel_reminder manage them. " +
-    "Never say a reminder is set unless set_reminder succeeded. " +
-    "For school work or anything important, pass important: true, a link if they named a site or doc, and focus_minutes (at least 10). " +
+    "{{REMINDER_BLOCK}}" +
     "Notes: save_note keeps something the user wants to remember, find_notes looks notes up, append_to_note adds to one. " +
     "When the user asks about something they may have saved (a code, a list, a fact about them), call find_notes with a few key words before answering. " +
     "To-dos: add_todo (with a due date if they gave one), list_todos, complete_todo. " +
@@ -2724,11 +2727,17 @@ dialog input:focus { border-color: #4a4f8a; }
         return `Opened ${app}.`;
       },
     };
-    // Without this, the model keeps calling the older set_reminder even when the Mac tools are offered too.
-    macAgentPrompt = " The BOON Focus helper is set up on this Mac, so for any reminder call mac_reminder, not set_reminder " +
-      "(it rings in the real Mac Reminders app, even if BOON is closed) — use set_reminder only if the user asks for " +
-      "a reminder inside BOON specifically, or mac_reminder fails. For a calendar event, call mac_calendar_event. " +
-      "To open an app on the user's Mac, call open_mac_app.";
+    // Replaces, not just adds to, the reminder instruction: naming set_reminder there crowded out mac_reminder
+    // even with a separate line telling the model to prefer it (tested against the real model).
+    reminderBlock = "To remind the user, call mac_reminder with the exact time including minutes (or in_minutes) " +
+      "— it rings in the real Mac Reminders app, even if BOON is closed; list_reminders and cancel_reminder manage " +
+      "BOON's own separate list, not the Mac one. Never say a reminder is set unless mac_reminder (or set_reminder) succeeded. " +
+      "Only for important school work (homework, study, tests, essays) where BOON itself should open a link and start " +
+      "a focus timer when it rings, call set_reminder instead, with important: true, a link if they named a site or doc, " +
+      "and focus_minutes (at least 10) — set_reminder only works while BOON stays open, mac_reminder doesn't need that. ";
+    macAgentPrompt = " For a calendar event, call mac_calendar_event. To open an app on the user's Mac, call open_mac_app.";
+    TOOLS.set_reminder.spec.description = "Only for IMPORTANT school work needing a focus timer when it rings (see important/focus_minutes) " +
+      "— for every other reminder use mac_reminder instead. " + TOOLS.set_reminder.spec.description;
   }
 
   // ----- action log -----
