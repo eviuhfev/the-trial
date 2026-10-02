@@ -2635,7 +2635,22 @@ dialog input:focus { border-color: #4a4f8a; }
   // Allow/Deny first, same as delete_note and the others.
   const MAC_APPS = ["Notes", "Reminders", "Calendar", "Music", "Safari", "Messages", "Mail", "Maps", "Photos", "Calculator", "FaceTime", "Spotify"];
   // reminderTime() only knows YYYY-MM-DD/today/tomorrow; dueDay() (used by add_todo) also turns a weekday into one.
-  const macArgs = (a) => (a.date ? { ...a, date: dueDay(a.date) } : a);
+  // A bare weekday that's today, with a time already past, means next week's one, not today (which just failed).
+  const macArgs = (a) => {
+    if (!a.date) return a;
+    let date = dueDay(a.date);
+    if (date && WEEKDAYS.includes(String(a.date).trim().toLowerCase())) {
+      try { reminderTime({ ...a, date }); }
+      catch (e) {
+        if (/has already passed/.test(e.message)) {
+          const d = parseDay(date);
+          d.setDate(d.getDate() + 7);
+          date = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+        }
+      }
+    }
+    return { ...a, date };
+  };
   async function macAction(type, args) {
     if (!hasLock()) throw new Error("BOON's Mac helper needs the BOON Focus add-on installed and set up.");
     const res = await ext({ type, ...args }, 20000);
@@ -3120,7 +3135,7 @@ dialog input:focus { border-color: #4a4f8a; }
           // Push back once so the answer comes from a tool.
           // Only a request to create a reminder, answered with a claim that one is set, with no reminder tool tried.
           const wantsReminder = /\bremind me\b|\bset (a |an )?(reminder|alarm)\b|\bwake me\b/i.test(text) && !/\b(cancel|delete|remove|list|show|which|what|did|is my|are my)\b/i.test(text);
-          const triedReminder = m.steps.some((s) => s.type === "tool" && s.name === "set_reminder");
+          const triedReminder = m.steps.some((s) => s.type === "tool" && /^(set_reminder|mac_reminder)$/.test(s.name));
           const claimsReminder = /\b(i'?ll remind|i will remind|will remind you|reminder (is |has been )?(set|scheduled|created)|(set|scheduled) (a |your |the )?reminder)\b/i;
           // Same for a note or to-do it says it saved without calling save_note or add_todo.
           const wantsSave = /\b(save|add|put|keep|store)\b[^.!?]{0,80}\b(notes?|to[- ]?dos?|task list)\b|\bjot\b|\bwrite (this|that|it) down\b|\b(take|make) a note\b|\bnote (this|that|it) down\b/i.test(text)
@@ -3186,7 +3201,7 @@ dialog input:focus { border-color: #4a4f8a; }
           const nudge = /\d\s*[÷\/×*+x-]\s*\d[\d,.]*\s*=\s*[$₩€£]?\s*\d/.test(content)
             ? "You wrote arithmetic in your answer. Work it out with the calculator tool instead, then give the final answer."
             : wantsReminder && !triedReminder && !(already && looked(/^list_reminders$/)) && !content.includes("?") && claimsReminder.test(content) && !refused
-              ? "You haven't set the reminder yet. Call set_reminder now with the exact time including minutes."
+              ? `You haven't set the reminder yet. Call ${hasLock() ? "mac_reminder" : "set_reminder"} now with the exact time including minutes.`
               : wantsSave && !triedSave && !(already && looked(/^(find_notes|list_todos)$/)) && !content.includes("?") && claimsSaved.test(content) && !refused
                 ? "You haven't saved it yet. Call save_note (for a note) or add_todo (for a to-do) now."
                 : asksRecall && !m.steps.some((s) => s.type === "tool")
