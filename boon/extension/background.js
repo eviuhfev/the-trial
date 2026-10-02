@@ -488,6 +488,15 @@ async function showIslandEverywhere() {
   for (const t of tabs) chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["island.js"] }).catch(() => {});
 }
 
+// A BOON tab left open across an add-on reload keeps running the old bridge, so it never sees that the add-on (or
+// a new version of it) is there; re-running bridge.js picks that up without needing a page reload. The old bridge's
+// own listeners are now talking to an extension context that's gone and will error if used, but that's silent and
+// harmless, same as a page left open across a Chrome restart.
+async function reinjectBridgeEverywhere() {
+  const tabs = await chrome.tabs.query({ url: ["http://localhost/*", "http://127.0.0.1/*"] }).catch(() => []);
+  for (const t of tabs) chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["bridge.js"] }).catch(() => {});
+}
+
 // ----- the locks -----
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   const s = await getSession();
@@ -759,6 +768,7 @@ chrome.runtime.onStartup.addListener(async () => {
 
 // Reloading the extension mid-session keeps the session; put the timer and the island back.
 chrome.runtime.onInstalled.addListener(async () => {
+  reinjectBridgeEverywhere();
   const s = await getSession();
   if (!s) return;
   await chrome.alarms.create("boon-focus-end", { when: s.end });
