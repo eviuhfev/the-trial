@@ -2738,6 +2738,38 @@ dialog input:focus { border-color: #4a4f8a; }
     macAgentPrompt = " For a calendar event, call mac_calendar_event. To open an app on the user's Mac, call open_mac_app.";
     TOOLS.set_reminder.spec.description = "Only for IMPORTANT school work needing a focus timer when it rings (see important/focus_minutes) " +
       "— for every other reminder use mac_reminder instead. " + TOOLS.set_reminder.spec.description;
+
+    TOOLS.web_search = {
+      label: "Searched the web",
+      spec: {
+        description: "Search the web. Returns a few results, each with a title, link and snippet. Follow up with read_page on a result's link to get the full page.",
+        parameters: { type: "object", properties: { query: { type: "string", description: "What to search for" } }, required: ["query"] },
+      },
+      show: (a) => a.query || "",
+      run: async (a) => {
+        const query = String(a.query || "").trim().slice(0, 300);
+        if (!query) throw new Error("Nothing to search for.");
+        const res = await macAction("web_search", { query });
+        if (!res.results || !res.results.length) return `No results for "${query}".`;
+        return res.results.map((r, i) => `${i + 1}. ${r.title}\n${r.url}\n${r.snippet}`).join("\n\n");
+      },
+    };
+    TOOLS.read_page = {
+      label: "Read a page",
+      spec: {
+        description: "Fetch a web page — from a web_search result or a link the user gave — and return its title and text, so you can answer from it. Always cite the link you read in your answer.",
+        parameters: { type: "object", properties: { url: { type: "string", description: "The page's full http(s) link" } }, required: ["url"] },
+      },
+      show: (a) => a.url || "",
+      run: async (a) => {
+        const url = String(a.url || "").trim();
+        if (!/^https?:\/\//i.test(url)) throw new Error("Give a full link starting with http:// or https://.");
+        const res = await macAction("fetch_url", { url });
+        const body = res.truncated ? `${res.text}\n\n[page cut short]` : res.text;
+        return `${res.title ? res.title + "\n" : ""}${res.url}\n\n${body}`;
+      },
+    };
+    macAgentPrompt += " To search the web, call web_search. To read a specific page — a web_search result's link or one the user gave you — call read_page, and cite the link you read in your answer.";
   }
 
   // ----- action log -----
