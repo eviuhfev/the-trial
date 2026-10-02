@@ -1395,7 +1395,10 @@ dialog input:focus { border-color: #4a4f8a; }
   // The date and time ride along with each task (so Qwen3 doesn't guess 2023), not in the system prompt:
   // that keeps the system prompt and tool list identical from task to task, so Ollama reuses the work it
   // already did on them instead of rereading ~3,000 tokens (about 30 s on a MacBook Air) before every task.
-  const agentPrompt = () => AGENT_PROMPT;
+  // Set once (if at all) when the Mac tools are registered below, same as them, so the prompt still stays
+  // identical from task to task within a session (the Ollama prompt-cache rule above).
+  let macAgentPrompt = "";
+  const agentPrompt = () => AGENT_PROMPT + macAgentPrompt;
   const withToday = (text) => {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, "0");
@@ -2706,6 +2709,11 @@ dialog input:focus { border-color: #4a4f8a; }
         return `Opened ${app}.`;
       },
     };
+    // Without this, the model keeps calling the older set_reminder even when the Mac tools are offered too.
+    macAgentPrompt = " The BOON Focus helper is set up on this Mac, so for any reminder call mac_reminder, not set_reminder " +
+      "(it rings in the real Mac Reminders app, even if BOON is closed) — use set_reminder only if the user asks for " +
+      "a reminder inside BOON specifically, or mac_reminder fails. For a calendar event, call mac_calendar_event. " +
+      "To open an app on the user's Mac, call open_mac_app.";
   }
 
   // ----- action log -----
