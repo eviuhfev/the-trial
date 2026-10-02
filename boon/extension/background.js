@@ -612,10 +612,11 @@ function actionConnect() {
     if (done) { actionWaiting.delete(msg.id); done(msg); }
   });
   port.onDisconnect.addListener(() => {
-    void chrome.runtime.lastError;
+    const why = chrome.runtime.lastError?.message;
     if (actionPort !== port) return;
     actionPort = null;
-    for (const done of actionWaiting.values()) done({ ok: false, error: "The Mac helper closed the connection. Run install.sh in boon/focus-helper, then reload this add-on." });
+    const msg = "The Mac helper closed the connection" + (why ? ` (${why})` : "") + ". Run install.sh in boon/focus-helper, then reload this add-on.";
+    for (const done of actionWaiting.values()) done({ ok: false, error: msg });
     actionWaiting.clear();
   });
   return port;
