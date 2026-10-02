@@ -124,7 +124,9 @@ function curlOnce(url) {
   const cmd = "curl -sS --connect-timeout " + CONNECT_TIMEOUT + " --max-time " + FETCH_TIMEOUT +
     " --max-filesize " + MAX_BODY + " -A " + sh(UA) + " -D - -o - " + sh(url);
   let out;
-  try { out = app.doShellScript(cmd); }
+  // Without this, do shell script turns every \n in the output into \r (its default "for AppleScript text" behavior),
+  // so the \r\n\r\n / \n\n header/body split below never matches anything — confirmed against the real osascript.
+  try { out = app.doShellScript(cmd, { alteringLineEndings: false }); }
   catch (e) {
     const msg = String((e && e.message) || e);
     throw new Error(/time(d)? ?out/i.test(msg) ? "that page took too long to answer" :
@@ -159,24 +161,65 @@ function fetchUrl(req) {
   return { url, title: htmlTitle(res.body), text, truncated: res.body.length >= MAX_BODY || text.length >= MAX_TEXT };
 }
 
-// DuckDuckGo's HTML-only endpoint (no key, no JS) — its result links are wrapped in a tracking redirect
-// ("//duckduckgo.com/l/?uddg=<real link>&..."), unwrapped here so BOON gets the real URL.
+// Pulls out up to `limit` pieces of text found between a literal open/close pair (e.g. "<item>"/"</item>"), left
+// to right, each search starting where the last one ended — same linear shape as stripBlocks, for the same reason
+// (an XML/RSS feed BOON didn't write is still content from the internet, not something to run a backtracking
+// regex over). Unclosed tags just stop the scan early rather than throwing: a partial result beats none.
+function extractAll(s, open, close, limit) {
+  const low = s.toLowerCase();
+  const out = [];
+  let i = 0;
+  while (out.length < limit) {
+    const start = low.indexOf(open, i);
+    if (start === -1) break;
+    const from = start + open.length;
+    const end = low.indexOf(close, from);
+    if (end === -1) break;
+    out.push(s.slice(from, end));
+    i = end + close.length;
+  }
+  return out;
+}
+const firstOf = (s, open, close) => extractAll(s, open, close, 1)[0] || "";
+function xmlText(s) {
+  const m = /^<!\[CDATA\[([\s\S]{0,20000})\]\]>$/.exec(s.trim());
+  return decodeEntities(m ? m[1] : s).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+}
+
+// Bing's search RSS feed (an output format it documents, not a workaround) — DuckDuckGo's HTML endpoint answers
+// curl with a "prove you're not a bot" challenge instead of results, and solving that would be the wrong kind of
+// clever, so BOON doesn't try. Wikipedia's own search API (JSON, built for this) fills in when Bing has nothing.
+function bingSearch(q) {
+  const res = fetchFollow("https://www.bing.com/search?q=" + encodeURIComponent(q) + "&format=rss", 3);
+  const body = res.body.slice(0, MAX_BODY);
+  const results = [];
+  for (const item of extractAll(body, "<item>", "</item>", 8)) {
+    if (results.length >= 5) break;
+    const title = xmlText(firstOf(item, "<title>", "</title>"));
+    const url = firstOf(item, "<link>", "</link>").trim();
+    const snippet = xmlText(firstOf(item, "<description>", "</description>")).slice(0, 300);
+    if (title && url) results.push({ title, url, snippet });
+  }
+  return results;
+}
+function wikipediaSearch(q) {
+  const res = fetchFollow("https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=5&srsearch=" + encodeURIComponent(q), 3);
+  let data;
+  try { data = JSON.parse(res.body); } catch (e) { return []; }
+  const hits = (data && data.query && data.query.search) || [];
+  return hits.filter((h) => h && h.title).map((h) => ({
+    title: decodeEntities(String(h.title)).trim(),
+    url: "https://en.wikipedia.org/wiki/" + encodeURIComponent(String(h.title).replace(/ /g, "_")),
+    snippet: decodeEntities(String(h.snippet || "")).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim(),
+  }));
+}
 function webSearch(req) {
   const q = str(req.query, 300);
-  const res = fetchFollow("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q), 3);
-  const body = res.body.slice(0, MAX_BODY);
-  const items = [];
-  const re = /class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
-  let m;
-  while (items.length < 5 && (m = re.exec(body))) {
-    let href = decodeEntities(m[1]);
-    const wrapped = /uddg=([^&]+)/.exec(href);
-    if (wrapped) { try { href = decodeURIComponent(wrapped[1]); } catch (e) {} }
-    const plain = (t) => decodeEntities(t).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-    items.push({ title: plain(m[2]), url: href, snippet: plain(m[3]) });
-  }
-  if (!items.length) throw new Error("no results for that search");
-  return { query: q, results: items };
+  let results = [];
+  try { results = bingSearch(q); } catch (e) {}
+  if (!results.length) { try { results = wikipediaSearch(q); } catch (e) {} }
+  if (!results.length) throw new Error("no results for that search");
+  return { query: q, results };
 }
 
 function createReminder(req) {
@@ -228,4 +271,4 @@ function run(argv) {
 }
 
 // A Node test can require() this file and call dispatch() with its own stand-in Application(), without osascript.
-if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle };
+if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText };

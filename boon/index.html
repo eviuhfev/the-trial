@@ -1521,6 +1521,50 @@ dialog input:focus { border-color: #4a4f8a; }
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} (${d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })})`;
     },
   };
+  // Open-Meteo: free, keyless, CORS-open, so this works in every browser with no Mac helper. WMO weather codes,
+  // short form (https://open-meteo.com/en/docs's own table has the long one).
+  const WMO = { 0: "clear sky", 1: "mainly clear", 2: "partly cloudy", 3: "overcast", 45: "fog", 48: "freezing fog",
+    51: "light drizzle", 53: "drizzle", 55: "dense drizzle", 56: "freezing drizzle", 57: "freezing drizzle",
+    61: "light rain", 63: "rain", 65: "heavy rain", 66: "freezing rain", 67: "freezing rain",
+    71: "light snow", 73: "snow", 75: "heavy snow", 77: "snow grains", 80: "rain showers", 81: "rain showers",
+    82: "violent rain showers", 85: "snow showers", 86: "snow showers", 95: "thunderstorm", 96: "thunderstorm with hail", 99: "thunderstorm with hail" };
+  TOOLS.get_weather = {
+    label: "Checked the weather",
+    spec: {
+      description: "Get the current weather and a few days' forecast for a place. No Mac helper needed.",
+      parameters: { type: "object", properties: { place: { type: "string", description: "A city or place name" } }, required: ["place"] },
+    },
+    show: (a) => a.place || "",
+    run: async (a) => {
+      const place = String(a.place || "").trim().slice(0, 100);
+      if (!place) throw new Error("Give a place name.");
+      let geo;
+      try {
+        const r = await fetch("https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&format=json&name=" + encodeURIComponent(place));
+        geo = await r.json();
+      } catch (e) { throw new Error("Couldn't reach the weather service."); }
+      const hit = geo?.results?.[0];
+      if (!hit) throw new Error(`BOON couldn't find a place called "${place}".`);
+      let data;
+      try {
+        const url = "https://api.open-meteo.com/v1/forecast?latitude=" + hit.latitude + "&longitude=" + hit.longitude +
+          "&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max" +
+          "&timezone=auto&forecast_days=5";
+        const r = await fetch(url);
+        data = await r.json();
+      } catch (e) { throw new Error("Couldn't reach the weather service."); }
+      const label = [hit.name, hit.admin1, hit.country].filter(Boolean).join(", ");
+      const lines = [`Weather for ${label}:`];
+      const code = (c) => WMO[c] || `weather code ${c}`;
+      if (data.current) lines.push(`Now: ${Math.round(data.current.temperature_2m)}°C, ${code(data.current.weather_code)}.`);
+      const d = data.daily;
+      for (let i = 0; i < (d?.time?.length || 0); i++) {
+        const rain = d.precipitation_probability_max ? `, ${d.precipitation_probability_max[i]}% chance of rain` : "";
+        lines.push(`${d.time[i]}: ${Math.round(d.temperature_2m_min[i])}–${Math.round(d.temperature_2m_max[i])}°C, ${code(d.weather_code[i])}${rain}.`);
+      }
+      return lines.join("\n");
+    },
+  };
   TOOLS.split_bill = {
     label: "Split the bill",
     spec: {
