@@ -2899,12 +2899,16 @@ dialog input:focus { border-color: #4a4f8a; }
     async function locateOnPage(windowId, target) {
       const shot = await macAction("browser_screenshot", { window_id: windowId });
       const prompt = `Screenshot of a web browser window, ${shot.image_w}x${shot.image_h} pixels. Find this on the page: "${target}". ` +
-        `Reply with ONLY its center point as two numbers "x,y" in this image's own pixels, nothing else. If it isn't visible, reply exactly "not found".`;
+        `Reply with ONLY its bounding box as four numbers "x1,y1,x2,y2" in this image's own pixels, nothing else. If it isn't visible, reply exactly "not found".`;
       const reply = await callVisionModel(shot.image, prompt);
       if (/not found/i.test(reply)) throw new Error(`Couldn't find "${target}" on the page.`);
-      const m = /(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/.exec(reply);
-      if (!m) throw new Error(`Couldn't tell where "${target}" is on the page.`);
-      const x = Math.round(Number(m[1])), y = Math.round(Number(m[2]));
+      // Asked for a box, but parsed loosely either way (a plain "x,y" center still works) — a vision model
+      // doesn't always follow the exact format asked for, and this is cheap to tolerate.
+      const nums = (reply.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+      let x, y;
+      if (nums.length >= 4) { x = Math.round((nums[0] + nums[2]) / 2); y = Math.round((nums[1] + nums[3]) / 2); }
+      else if (nums.length >= 2) { x = Math.round(nums[0]); y = Math.round(nums[1]); }
+      else throw new Error(`Couldn't tell where "${target}" is on the page.`);
       const look = await macAction("browser_inspect_point", { window_id: windowId, x, y });
       if (!look.element || !look.element.in_window) throw new Error(`Couldn't find "${target}" precisely enough to act on.`);
       return { x: look.element.click_x, y: look.element.click_y, element: look.element };
@@ -3213,8 +3217,13 @@ dialog input:focus { border-color: #4a4f8a; }
   // this call has nothing to do with the chat it's running inside — it never touches chat.messages). Always
   // local: a live screenshot can show anything on the user's screen, so it's never sent to a cloud model.
   async function callVisionModel(imageDataUrl, prompt) {
-    const v = models.find((m) => m.vision && m.local);
-    if (!v) throw new Error(`BOON needs a local vision model to see the page. Run "ollama pull gemma3:4b", then try again.`);
+    const localVision = models.filter((m) => m.vision && m.local);
+    // Prefer a qwen-vl model over gemma's vision variant specifically for this call: live testing
+    // (2026-10-03) found gemma3:4b's reported click points way off (hundreds of pixels), while qwen2.5vl
+    // located the same targets accurately. Still falls back to whatever local vision model exists, so this
+    // doesn't hard-fail on a setup without qwen-vl installed.
+    const v = localVision.find((m) => /qwen.*vl\b/i.test(m.label)) || localVision[0];
+    if (!v) throw new Error(`BOON needs a local vision model to see the page. Run "ollama pull qwen2.5vl", then try again.`);
     let res;
     try {
       res = await fetch(OLLAMA + "/v1/chat/completions", {

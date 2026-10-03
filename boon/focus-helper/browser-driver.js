@@ -84,6 +84,11 @@ function launchChromium() {
     "--no-first-run",
     "--no-default-browser-check",
     "--password-store=basic",
+    // Without this, a Retina screen's 2x device pixel ratio makes the screenshot twice the size the viewport
+    // and click coordinates use (confirmed live: a 1280x800 viewport produced a 2560x1600 image) — forcing it
+    // to 1 keeps "image pixels == click pixels" exactly true, at the cost of the visible window looking a
+    // little less crisp on a Retina display.
+    "--force-device-scale-factor=1",
   ], { detached: true, stdio: "ignore" });
   child.unref();
 }
@@ -217,7 +222,9 @@ async function run(req) {
       const risk = riskyElement(await inspectAt(page, x, y));
       if (risk) throw new Error(`refused: that looks like ${risk} — BOON won't type into it`);
       await page.bringToFront();
-      await page.mouse.click(x, y);
+      // Triple-click selects any text already in the field, so typing replaces it instead of appending
+      // (confirmed live: a plain click left the cursor in place and a second type ran on into the first).
+      await page.mouse.click(x, y, { clickCount: 3 });
       await page.keyboard.type(text);
       return { window_id: windowId, x, y, typed: text.length };
     }

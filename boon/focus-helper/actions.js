@@ -318,7 +318,9 @@ function runBrowserDriver(req) {
   app.includeStandardAdditions = true;
   const driver = "$HOME/Library/Application Support/BOON Focus/run-browser-driver.sh";
   let out;
-  try { out = app.doShellScript(sh(driver) + " " + sh(JSON.stringify(req)), { alteringLineEndings: false }); }
+  // sh() single-quotes, which would stop $HOME from expanding (confirmed live: single quotes made this a
+  // literal, nonexistent path) — double quotes instead, which still protect the spaces in the path.
+  try { out = app.doShellScript('"' + driver + '" ' + sh(JSON.stringify(req)), { alteringLineEndings: false }); }
   catch (e) { throw new Error(`browser control failed (${String((e && e.message) || e)})`); }
   let result;
   try { result = JSON.parse(out); }
