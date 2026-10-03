@@ -2728,6 +2728,25 @@ dialog input:focus { border-color: #4a4f8a; }
         return `Added "${text}" to the Mac Reminders app, ${fmtWhen(at)}.`;
       },
     };
+    TOOLS.cancel_mac_reminder = {
+      label: "Cancel a Mac reminder",
+      spec: {
+        description: "Mark a reminder done in the user's Mac Reminders app (stops it from alerting), by words from its title. " +
+          "For a reminder mac_reminder made — use cancel_reminder instead for BOON's own separate list.",
+        parameters: { type: "object", properties: {
+          text: { type: "string", description: "Words from the reminder's title" },
+          list: { type: "string", description: "Optional Reminders list name" },
+        }, required: ["text"] },
+      },
+      show: (a) => a.text || "",
+      ask: (a) => ({ q: `Mark the Mac reminder matching "${String(a.text || "").trim()}" as done?` }),
+      run: async (a) => {
+        const text = String(a.text || "").trim().slice(0, 200);
+        if (!text) throw new Error("Say which reminder.");
+        const res = await macAction("complete_reminder", { text, list: a.list ? String(a.list).trim().slice(0, 60) : undefined });
+        return `Marked "${res.title}" done in the Mac Reminders app.`;
+      },
+    };
     TOOLS.mac_calendar_event = {
       label: "Add a Calendar event",
       spec: {
@@ -2774,8 +2793,9 @@ dialog input:focus { border-color: #4a4f8a; }
     // Replaces, not just adds to, the reminder instruction: naming set_reminder there crowded out mac_reminder
     // even with a separate line telling the model to prefer it (tested against the real model).
     reminderBlock = "To remind the user, call mac_reminder with the exact time including minutes (or in_minutes) " +
-      "— it rings in the real Mac Reminders app, even if BOON is closed; list_reminders and cancel_reminder manage " +
-      "BOON's own separate list, not the Mac one. Never say a reminder is set unless mac_reminder (or set_reminder) succeeded. " +
+      "— it rings in the real Mac Reminders app, even if BOON is closed; to cancel one, call cancel_mac_reminder, not " +
+      "cancel_reminder — list_reminders and cancel_reminder only manage BOON's own separate list, not the Mac one. " +
+      "Never say a reminder is set unless mac_reminder (or set_reminder) succeeded. " +
       "Only for important school work (homework, study, tests, essays) where BOON itself should open a link and start " +
       "a focus timer when it rings, call set_reminder instead, with important: true, a link if they named a site or doc, " +
       "and focus_minutes (at least 10) — set_reminder only works while BOON stays open, mac_reminder doesn't need that. ";

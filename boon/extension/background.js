@@ -461,7 +461,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       await sweep(s);
       return { ok: true, start: s.start, end: s.end, minEnd: s.minEnd, mode };
     }
-    if (type === "create_reminder" || type === "create_event" || type === "open_app" || type === "web_search" || type === "fetch_url") {
+    if (type === "create_reminder" || type === "complete_reminder" || type === "create_event" || type === "open_app" || type === "web_search" || type === "fetch_url") {
       const { type: _drop, ...args } = msg;
       return await runMacAction(type, args);
     }

@@ -232,6 +232,27 @@ function createReminder(req) {
   return { title, due: due.toISOString() };
 }
 
+// Marks a reminder done rather than deleting it outright — reversible (Reminders still shows it, under
+// Completed), and "turn the alarm off" only needs it to stop alerting, not to vanish from history.
+function completeReminder(req) {
+  const text = str(req.text, 200).toLowerCase();
+  const Reminders = Application("Reminders");
+  const named = req.list ? str(req.list, 60) : "";
+  const lists = named && Reminders.lists.whose({ name: named })().length ? Reminders.lists.whose({ name: named })() : Reminders.lists();
+  const hits = [];
+  for (const list of lists) {
+    for (const r of list.reminders.whose({ completed: false })()) {
+      if (r.name().toLowerCase().includes(text)) hits.push(r);
+    }
+  }
+  if (!hits.length) throw new Error(`no open Mac reminder matches "${req.text}"`);
+  if (hits.length > 1) throw new Error(`${hits.length} Mac reminders match "${req.text}" — say more of the title to pick one`);
+  const r = hits[0];
+  const title = r.name();
+  r.completed = true;
+  return { title };
+}
+
 function createEvent(req) {
   const title = str(req.title, 200);
   const start = when(req.start);
@@ -255,6 +276,7 @@ function openApp(req) {
 
 function dispatch(req) {
   if (req.action === "create_reminder") return createReminder(req);
+  if (req.action === "complete_reminder") return completeReminder(req);
   if (req.action === "create_event") return createEvent(req);
   if (req.action === "open_app") return openApp(req);
   if (req.action === "web_search") return webSearch(req);
@@ -271,4 +293,4 @@ function run(argv) {
 }
 
 // A Node test can require() this file and call dispatch() with its own stand-in Application(), without osascript.
-if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText };
+if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText, createReminder, completeReminder };
