@@ -95,7 +95,6 @@ function createIconWindow() {
   });
 }
 
-ipcMain.on("boon-icon-clicked", () => { openBoon(); });
 ipcMain.on("boon-icon-right-clicked", () => {
   const menu = Menu.buildFromTemplate([
     { label: "Open BOON", click: () => openBoon() },
@@ -105,23 +104,45 @@ ipcMain.on("boon-icon-right-clicked", () => {
   menu.popup({ window: iconWindow });
 });
 
-// Manual drag instead of -webkit-app-region: drag — more reliable on a small frameless/transparent window, and
-// it doubles as clean click-vs-drag detection (a real click never reaches here, only a move past the threshold
-// in icon.html does).
-let dragOrigin = null;
-ipcMain.on("boon-icon-drag-start", () => { dragOrigin = iconWindow.getPosition(); });
-ipcMain.on("boon-icon-drag-move", (event, dx, dy) => {
-  if (!dragOrigin) return;
-  iconWindow.setPosition(Math.round(dragOrigin[0] + dx), Math.round(dragOrigin[1] + dy));
+// Dragging is driven entirely from here via polling screen.getCursorScreenPoint(), not from renderer mousemove
+// events — the window is only ~84px, so a fast drag can easily carry the cursor past its edge, after which the
+// renderer gets no more mouse events at all (they go to whatever's now under the cursor) and tracking would just
+// stall. Polling the cursor's absolute position keeps the window chasing it regardless of which window the OS
+// currently thinks is "under" the mouse. The same mechanism decides click vs. drag at release (small total
+// movement = click) instead of trusting the renderer to detect its own mouseup, which has the identical
+// cursor-left-the-window blind spot — plus a hard timeout so a missed release can never wedge the icon to the
+// cursor indefinitely.
+let drag = null;
+function endDrag() {
+  if (!drag) return;
+  clearInterval(drag.interval);
+  clearTimeout(drag.timeout);
+  const cur = screen.getCursorScreenPoint();
+  const movedPx = Math.hypot(cur.x - drag.cursorStart.x, cur.y - drag.cursorStart.y);
+  drag = null;
+  if (movedPx < 4) openBoon();
+}
+ipcMain.on("boon-icon-mouse-down", () => {
+  if (drag) endDrag();
+  const cursorStart = screen.getCursorScreenPoint();
+  const windowStart = iconWindow.getPosition();
+  const interval = setInterval(() => {
+    const cur = screen.getCursorScreenPoint();
+    iconWindow.setPosition(Math.round(windowStart[0] + (cur.x - cursorStart.x)), Math.round(windowStart[1] + (cur.y - cursorStart.y)));
+  }, 16);
+  const timeout = setTimeout(endDrag, 8000);
+  drag = { cursorStart, interval, timeout };
 });
+ipcMain.on("boon-icon-mouse-up", () => endDrag());
 
 app.whenReady().then(() => {
   if (app.dock) app.dock.hide();
   createIconWindow();
-  globalShortcut.register("Command+Option+B", () => {
+  const bound = globalShortcut.register("Command+Option+B", () => {
     if (iconWindow.isVisible()) iconWindow.hide();
     else iconWindow.show();
   });
+  if (!bound) console.error("Command+Option+B could not be registered as a global shortcut (already in use).");
 });
 app.on("will-quit", () => globalShortcut.unregisterAll());
 app.on("window-all-closed", () => {});

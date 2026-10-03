@@ -75,25 +75,27 @@
     </div>
   </div>
   <script>
+    // Only tracks button state for the squish/grabbing-cursor feedback here — main.js owns the actual drag
+    // tracking and the click-vs-drag decision (see its comment for why: this window is too small to trust
+    // mousemove/mouseup to keep arriving once the cursor outruns it).
     const wrap = document.getElementById("wrap");
-    let dragging = false, moved = false, startScreenX = 0, startScreenY = 0;
-    wrap.addEventListener("mousedown", (e) => {
-      dragging = true; moved = false;
-      startScreenX = e.screenX; startScreenY = e.screenY;
-      wrap.classList.add("dragging");
-      window.boonIcon.dragStart();
-    });
-    window.addEventListener("mousemove", (e) => {
-      if (!dragging) return;
-      const dx = e.screenX - startScreenX, dy = e.screenY - startScreenY;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
-      if (moved) window.boonIcon.dragMove(dx, dy);
-    });
-    window.addEventListener("mouseup", () => {
+    let pressed = false;
+    function release() {
+      if (!pressed) return;
+      pressed = false;
       wrap.classList.remove("dragging");
-      if (dragging && !moved) window.boonIcon.clicked();
-      dragging = false;
+      window.boonIcon.mouseUp();
+    }
+    wrap.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      pressed = true;
+      wrap.classList.add("dragging");
+      window.boonIcon.mouseDown();
     });
+    window.addEventListener("mouseup", (e) => { if (e.button === 0) release(); });
+    // Self-heal: if the button was released while the cursor was elsewhere, the next time it passes back over
+    // this window without the button held, catch up rather than staying stuck in the "pressed" visual state.
+    window.addEventListener("mousemove", (e) => { if (e.buttons === 0) release(); });
     wrap.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       window.boonIcon.rightClicked();
