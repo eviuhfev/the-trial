@@ -101,6 +101,35 @@ function stripBlocks(s, pairs) {
   }
   return out;
 }
+
+// Removes every "<...>" tag, aware that a quoted attribute can itself contain a literal '>' — seen for real in
+// Wikipedia's data-mw template-JSON attributes, where a naive /<[^>]+>/ stops at that inner '>' and leaks the
+// rest of the attribute (raw template JSON) as page text. Scans forward with indexOf instead of a backtracking
+// regex, same reason as stripBlocks above: a page with many unclosed '<' must stay O(n), not risk blowing up
+// hunting for a '>' that never comes. An unclosed tag drops the rest, same safe default stripBlocks uses.
+function stripTags(s) {
+  let out = "", i = 0;
+  while (i < s.length) {
+    const lt = s.indexOf("<", i);
+    if (lt === -1) { out += s.slice(i); break; }
+    out += s.slice(i, lt);
+    let j = lt + 1, gt = -1;
+    while (j < s.length) {
+      const c = s[j];
+      if (c === '"' || c === "'") {
+        const end = s.indexOf(c, j + 1);
+        j = end === -1 ? s.length : end + 1;
+        continue;
+      }
+      if (c === ">") { gt = j; break; }
+      j++;
+    }
+    if (gt === -1) { i = s.length; break; }
+    out += " ";
+    i = gt + 1;
+  }
+  return out;
+}
 const SKIP_TAGS = ["script", "style", "noscript", "svg", "head", "nav", "header", "footer", "aside"].map((t) => ({ open: "<" + t, close: "</" + t + ">" }));
 const COMMENT_PAIR = [{ open: "<!--", close: "-->" }];
 
@@ -168,7 +197,7 @@ function textFromHtml(body) {
   s = stripBlocks(s, COMMENT_PAIR);
   s = s.replace(/<\/(p|div|li|h[1-6]|tr|section|article)>/gi, "\n");
   s = s.replace(/<br\s*\/?>/gi, "\n");
-  s = s.replace(/<[^>]+>/g, " ");
+  s = stripTags(s);
   s = decodeEntities(s);
   s = s.replace(/[ \t]+/g, " ").replace(/[ \t]*\n[ \t]*/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   return s.slice(0, MAX_TEXT);
