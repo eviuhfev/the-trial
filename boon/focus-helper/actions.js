@@ -232,9 +232,16 @@ function webSearch(req) {
   try { bing = bingSearch(q).filter((r) => relevant(q, r)); } catch (e) {}
   let wiki = [];
   try { wiki = wikipediaSearch(q); } catch (e) {}
+  // Wikipedia's own search always returns its best 5 guesses, even once the real matches run out, so once Bing's
+  // bad results are filtered out it was these loose tail entries ("Starship flight test 13" for "next SAT test
+  // date") doing the same first-word-ish guessing that got Bing filtered in the first place. Filter Wikipedia the
+  // same way; keep its raw #1 if filtering would otherwise leave nothing, since that single top hit has been right
+  // in every real example seen so far.
+  const wikiGood = wiki.filter((r) => relevant(q, r));
+  const wikiKept = wikiGood.length ? wikiGood : wiki.slice(0, 1);
   const seen = new Set();
   const results = [];
-  for (const r of [...wiki, ...bing]) {
+  for (const r of [...wikiKept, ...bing]) {
     const key = r.url.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
