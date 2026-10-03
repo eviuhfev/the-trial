@@ -1,7 +1,7 @@
 // BOON's floating desktop icon: a small always-on-top widget, separate from the browser tab, that sits on screen
 // and opens BOON (starting its local server if needed) when clicked. See install.sh for how it's kept running
 // across restarts.
-const { app, BrowserWindow, ipcMain, Menu, screen, globalShortcut } = require("electron");
+const { app, BrowserWindow, ipcMain, Menu, screen, globalShortcut, powerMonitor } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -76,7 +76,36 @@ async function openBoon() {
   focusOrOpenBoonTab();
 }
 
+// Two instances would each register their own Command+Option+B, and whichever lost that registration race
+// would silently have a dead shortcut (observed live, 2026-10-03, after a manual restart briefly left two
+// running at once) — refuse a second launch outright instead, and just reassert the existing one on screen.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  return;
+}
+app.on("second-instance", () => reassertVisible());
+
 let iconWindow;
+// Keeps a saved position usable even if a display was disconnected/resized since it was saved.
+function clampToDisplay(win) {
+  const [x, y] = win.getPosition();
+  const display = screen.getDisplayNearestPoint({ x, y }) || screen.getPrimaryDisplay();
+  const { x: dx, y: dy, width, height } = display.workArea;
+  const nx = Math.min(Math.max(x, dx), dx + width - ICON_SIZE);
+  const ny = Math.min(Math.max(y, dy), dy + height - ICON_SIZE);
+  if (nx !== x || ny !== y) win.setPosition(nx, ny);
+}
+// Re-applies every always-visible flag, not just show() — found live (2026-10-03) that after the Mac slept
+// and woke, the window was still "visible" by Electron's own bookkeeping but not actually on screen, which
+// also made the Command+Option+B toggle below useless (it only ever called the plain hide()/show() pair, so
+// toggling it just flipped between two states that both looked the same: invisible).
+function reassertVisible() {
+  if (!iconWindow) return;
+  iconWindow.setAlwaysOnTop(true, "screen-saver");
+  iconWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  clampToDisplay(iconWindow);
+  iconWindow.showInactive();
+}
 function createIconWindow() {
   const { x, y } = loadPosition();
   iconWindow = new BrowserWindow({
@@ -140,9 +169,13 @@ app.whenReady().then(() => {
   createIconWindow();
   const bound = globalShortcut.register("Command+Option+B", () => {
     if (iconWindow.isVisible()) iconWindow.hide();
-    else iconWindow.show();
+    else reassertVisible();
   });
   if (!bound) console.error("Command+Option+B could not be registered as a global shortcut (already in use).");
+  // A sleep/wake cycle (or a display being connected/disconnected) is what was actually observed to leave the
+  // window technically "visible" but not really on screen, with no later user action required to trigger it.
+  powerMonitor.on("resume", reassertVisible);
+  screen.on("display-metrics-changed", reassertVisible);
 });
 app.on("will-quit", () => globalShortcut.unregisterAll());
 app.on("window-all-closed", () => {});
