@@ -9,7 +9,7 @@
 // model, since this script is the last place that can say no before anything happens on the Mac.
 const APPS = ["Notes", "Reminders", "Calendar", "Music", "Safari", "Messages", "Mail", "Maps", "Photos", "Calculator", "FaceTime", "Spotify"];
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
-const MAX_BODY = 500000;   // bytes of response read before BOON's robot sees any of it
+const MAX_BODY = 3000000;  // bytes of response read before BOON's robot sees any of it
 const MAX_TEXT = 6000;     // chars of extracted page text handed back (keeps prompts small)
 const CONNECT_TIMEOUT = 5; // seconds
 const FETCH_TIMEOUT = 12;  // seconds, whole request
