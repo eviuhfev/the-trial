@@ -3134,13 +3134,13 @@ dialog input:focus { border-color: #4a4f8a; }
     const warm = agentWarm = { model: model.id, at: Date.now() };
     const ctl = warmCtl = new AbortController();
     const slow = setTimeout(() => { warming = true; if (agentMode) renderHint(); }, 1500);
-    fetch(OLLAMA + "/v1/chat/completions", {
+    fetch(OLLAMA + "/api/chat", {
       method: "POST",
       signal: ctl.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: model.id.slice(LOCAL.length), messages: [{ role: "system", content: agentPrompt() }, { role: "user", content: "hi" }],
-        tools: TOOL_SPECS, stream: false, max_tokens: 1, reasoning_effort: "none",
+        tools: TOOL_SPECS, stream: false, think: false, options: { num_ctx: LOCAL_CTX, num_predict: 1 },
       }),
     }).then(
       (r) => { if (!r.ok) warm.at = Date.now() - WARM_MS + 30000; },                               // try again in 30 s
@@ -3163,7 +3163,7 @@ dialog input:focus { border-color: #4a4f8a; }
     const local = isLocal(model);
     let res;
     try {
-      res = await fetch(local ? OLLAMA + "/v1/chat/completions" : API + "/chat/completions", {
+      res = await fetch(local ? OLLAMA + "/api/chat" : API + "/chat/completions", {
         method: "POST",
         signal: controller.signal,
         headers: local ? { "Content-Type": "application/json" } : {
@@ -3172,11 +3172,12 @@ dialog input:focus { border-color: #4a4f8a; }
           "HTTP-Referer": location.origin && location.origin !== "null" ? location.origin : "https://github.com/eviuhfev/the-trial",
           "X-Title": "BOON",
         },
-        // Qwen3 thinks for ~40 s per step on a laptop; with thinking off it picks tools in ~2 s.
-        body: JSON.stringify({
-          model: local ? model.slice(LOCAL.length) : model, messages, tools: TOOL_SPECS, stream: false,
-          ...(local ? { reasoning_effort: "none", max_tokens: REPLY_TOKENS } : {}),
-        }),
+        // Qwen3 thinks for ~40 s per step on a laptop; with thinking off it picks tools in ~2 s. Local calls use
+        // Ollama's native /api/chat, not the OpenAI-compatible /v1/chat/completions, so options.num_ctx actually
+        // takes effect (the /v1 endpoint silently ignores it, confirmed 2026-10-03) — see the LOCAL_CTX comment below.
+        body: JSON.stringify(local
+          ? { model: model.slice(LOCAL.length), messages, tools: TOOL_SPECS, stream: false, think: false, options: { num_ctx: LOCAL_CTX, num_predict: REPLY_TOKENS } }
+          : { model, messages, tools: TOOL_SPECS, stream: false }),
       });
     } catch (err) {
       if (local && err.name !== "AbortError") throw new Error("Couldn't reach Ollama on this computer. Make sure the Ollama app is running, then try again.");
@@ -3190,9 +3191,13 @@ dialog input:focus { border-color: #4a4f8a; }
       throw new Error(msg);
     }
     const j = await res.json();
-    if (j.error) throw new Error(j.error.message || "The model returned an error.");
+    // Native Ollama errors are sometimes a plain string rather than {message}.
+    if (j.error) throw new Error((j.error && j.error.message) || (typeof j.error === "string" ? j.error : "The model returned an error."));
     if (local) agentWarm = { model, at: Date.now() };
-    const msg = j.choices?.[0]?.message;
+    // Native /api/chat returns the reply at the top level (j.message); the OpenAI-compatible cloud endpoint
+    // nests it under choices[0].message. tool_calls[].function.arguments comes back as an object, not a JSON
+    // string, from native Ollama, and tool_calls[] has no id — both already handled where calls are read below.
+    const msg = local ? j.message : j.choices?.[0]?.message;
     if (!msg) throw new Error("The model sent back an empty reply.");
     return msg;
   }
@@ -3232,11 +3237,15 @@ dialog input:focus { border-color: #4a4f8a; }
     return String(content).trim();
   }
 
-  // A local model's 4,096-token window holds the instructions and tools (~2,600 tokens, which Ollama keeps cached),
-  // earlier turns, this task's steps and the reply. Going over makes Ollama drop the cached part (slow again) or the task.
+  // A local model's context window holds the instructions and tools, earlier turns, this task's steps and the
+  // reply. Going over makes Ollama drop the cached part (slow again) or the task. By Day 6-7 (29 tools) the
+  // instructions+tools alone reached ~4,000 tokens on their own — right at the old 4,096 window, leaving ~0 room
+  // for anything else and busting the prefix cache on every single task (measured 2026-10-03). Local calls now
+  // ask Ollama for an 8,192 window directly via options.num_ctx on the native /api/chat endpoint, since the
+  // OpenAI-compatible /v1/chat/completions endpoint silently ignores num_ctx (also confirmed 2026-10-03).
   // Rough count, checked against the Qwen3 tokenizer and on the high side for English: a token per digit and per
   // Chinese/Japanese/Korean character, 1.5 per other non-English character (accents, emoji), 3.2 other characters a token.
-  const LOCAL_CTX = 4096, REPLY_TOKENS = 600, PAST_TOKENS = 700, PAST_TURNS = 6, TOOL_RESULT_MAX = 2000;
+  const LOCAL_CTX = 8192, REPLY_TOKENS = 600, PAST_TOKENS = 700, PAST_TURNS = 6, TOOL_RESULT_MAX = 2000;
   const estTokens = (t) => {
     let k = 0, r = 0;
     for (const ch of String(t ?? "")) {
