@@ -64,6 +64,21 @@ function decodeEntities(s) {
   });
 }
 
+// Finds `open` (e.g. "<head"), skipping a match that's really a prefix of a longer tag name — "<head" must not
+// match inside "<header". Only checked when open ends in a word character (a tag name): the char right after then
+// has to be '>', '/', whitespace or end of string, or it's a different, longer name and the scan keeps going.
+// A non-word-ending open like "<!--" (HTML comments) has no such longer-name ambiguity, so it matches as-is.
+function indexOfTag(low, open, from) {
+  const checkBoundary = /\w$/.test(open);
+  for (let i = from; ; ) {
+    const pos = low.indexOf(open, i);
+    if (pos === -1 || !checkBoundary) return pos;
+    const next = low[pos + open.length];
+    if (next === undefined || next === ">" || next === "/" || /\s/.test(next)) return pos;
+    i = pos + 1;
+  }
+}
+
 // Removes every "<open ...> ... <close>" block whose own content is skipped (script/style/comments). A regex
 // like /<script>[\s\S]*?<\/script>/g re-tries its lazy middle from every leftover "<script" in the page, which
 // is quadratic on a page with many unclosed tags — a crafted or just broken page could hang the Mac helper. This
@@ -75,7 +90,7 @@ function stripBlocks(s, pairs) {
   while (i < s.length) {
     let bestPos = -1, bestPair = null;
     for (const p of pairs) {
-      const pos = low.indexOf(p.open, i);
+      const pos = indexOfTag(low, p.open, i);
       if (pos !== -1 && (bestPos === -1 || pos < bestPos)) { bestPos = pos; bestPair = p; }
     }
     if (bestPos === -1) { out += s.slice(i); break; }
