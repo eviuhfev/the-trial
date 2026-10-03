@@ -1425,7 +1425,7 @@ dialog input:focus { border-color: #4a4f8a; }
     "To-dos: add_todo (with a due date if they gave one), list_todos, complete_todo. " +
     "Never say a note or to-do is saved or done unless the tool succeeded. " +
     "To answer questions about notes, to-dos or reminders, check with find_notes, list_todos or list_reminders, since they change outside this chat. " +
-    "delete_note, delete_todo and cancel_reminder ask the user to Allow or Deny first: just call the tool, and if they deny it, say it wasn't done. " +
+    "delete_note and delete_todo ask the user to Allow or Deny first: just call the tool, and if they deny it, say it wasn't done. " +
     "You can make pictures: call make_image. For a 3D model or something to 3D print, call make_3d_model, then save_3d_file if they want the file; " +
     "only make 3D models when the user asks for 3D, a model or printing. Pictures and models show up in the steps. " +
     "When the task is done, give a short, clear final answer that says what you found or did, since the user may not open the steps.";
@@ -1717,11 +1717,10 @@ dialog input:focus { border-color: #4a4f8a; }
   TOOLS.cancel_reminder = {
     label: "Cancel a reminder",
     spec: {
-      description: "Cancel an upcoming reminder by its id (from list_reminders) or by words from its text. BOON asks the user to Allow or Deny first.",
+      description: "Cancel an upcoming reminder by its id (from list_reminders) or by words from its text.",
       parameters: { type: "object", properties: { id: { type: "string" }, text: { type: "string" } } },
     },
     show: (a) => a.id || a.text || "",
-    ask: (a) => { const r = pickReminder(loadReminders(), a); return { q: `Cancel the reminder "${r.text}" for ${fmtWhen(r.at)}?`, id: r.id }; },
     run: (a) => {
       const list = loadReminders();
       const r = pickReminder(list, a);
