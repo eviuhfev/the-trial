@@ -101,8 +101,49 @@ function stripBlocks(s, pairs) {
   }
   return out;
 }
-const SKIP_TAGS = ["script", "style", "noscript", "svg", "head"].map((t) => ({ open: "<" + t, close: "</" + t + ">" }));
+const SKIP_TAGS = ["script", "style", "noscript", "svg", "head", "nav", "header", "footer", "aside"].map((t) => ({ open: "<" + t, close: "</" + t + ">" }));
 const COMMENT_PAIR = [{ open: "<!--", close: "-->" }];
+
+// Content between one tag's own '>' and its properly nested matching close, counting opens/closes of that same
+// tag name by position so an inner one (e.g. a nested <div> inside a content div) doesn't end the region early.
+// tagStart is the position of that tag's own '<'; returns "" if it's not a real tag there or never closes.
+function extractByDepth(s, low, tagName, tagStart) {
+  if (tagStart === -1) return "";
+  const openEnd = low.indexOf(">", tagStart);
+  if (openEnd === -1) return "";
+  const openMarker = "<" + tagName, closeMarker = "</" + tagName;
+  let depth = 1, i = openEnd + 1;
+  while (depth > 0) {
+    const nextClose = low.indexOf(closeMarker, i);
+    if (nextClose === -1) return s.slice(openEnd + 1);
+    const nextOpen = indexOfTag(low, openMarker, i);
+    if (nextOpen !== -1 && nextOpen < nextClose) { depth++; i = nextOpen + openMarker.length; }
+    else { depth--; if (depth === 0) return s.slice(openEnd + 1, nextClose); i = nextClose + closeMarker.length; }
+  }
+}
+
+// Narrows the page to its main-content landmark before anything else runs, so nav/sidebar/menu text never
+// reaches the summarizer to begin with — a real Wikipedia fetch buried its lead paragraph behind ~4800 chars of
+// site-chrome nav otherwise, blowing the whole MAX_TEXT budget on menus. Tries a <main> or <article> tag first
+// (singleton landmarks, so a first match is always the real one), then an id="mw-content-text" (Wikipedia's own
+// content div), id="bodycontent" or role="main" marker, each depth-matched since those sit on a <div>. Returns
+// "" if none are found, so the caller falls back to the whole page — no change for pages without any of these.
+function extractMainRegion(s, low) {
+  for (const tag of ["main", "article"]) {
+    const region = extractByDepth(s, low, tag, indexOfTag(low, "<" + tag, 0));
+    if (region) return region;
+  }
+  for (const marker of ['id="mw-content-text"', 'id="bodycontent"', 'role="main"']) {
+    const markPos = low.indexOf(marker);
+    if (markPos === -1) continue;
+    const tagStart = low.lastIndexOf("<", markPos);
+    const nameMatch = tagStart === -1 ? null : /^<([a-z0-9]+)/.exec(low.slice(tagStart, tagStart + 20));
+    if (!nameMatch) continue;
+    const region = extractByDepth(s, low, nameMatch[1], tagStart);
+    if (region) return region;
+  }
+  return "";
+}
 
 function htmlTitle(body) {
   const s = stripBlocks(body.slice(0, 50000), COMMENT_PAIR);
@@ -116,10 +157,13 @@ function htmlTitle(body) {
   return decodeEntities(text).replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
-// Good enough to summarize, not a real reader view: drops scripts/styles/comments, turns block ends into line
-// breaks so paragraphs don't run together, then strips every other tag.
+// Good enough to summarize, not a real reader view: narrows to the main-content landmark if there is one, drops
+// scripts/styles/comments/nav chrome, turns block ends into line breaks so paragraphs don't run together, then
+// strips every other tag.
 function textFromHtml(body) {
   let s = body.slice(0, MAX_BODY);
+  const main = extractMainRegion(s, s.toLowerCase());
+  if (main) s = main;
   s = stripBlocks(s, SKIP_TAGS);
   s = stripBlocks(s, COMMENT_PAIR);
   s = s.replace(/<\/(p|div|li|h[1-6]|tr|section|article)>/gi, "\n");
