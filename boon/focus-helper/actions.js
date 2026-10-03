@@ -319,6 +319,18 @@ function stdApp() {
   app.includeStandardAdditions = true;
   return app;
 }
+function systemEvents() {
+  const SE = Application("System Events");
+  SE.includeStandardAdditions = true;
+  return SE;
+}
+// How screencapture's own -R region (real screen points) maps onto the resized screenshot BOON's vision model
+// sees, so a click/type can scale the model's pixel answer back to a real point. sips -Z only ever shrinks, never
+// enlarges, so this mirrors that rule exactly rather than re-measuring the file after the fact.
+function fitDim(w, h, maxDim) {
+  const scale = Math.min(1, maxDim / Math.max(w, h));
+  return { w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)), scale };
+}
 
 function findBrowserWindow(windowId) {
   const id = Number(windowId);
@@ -411,8 +423,76 @@ function browserScreenshot(req) {
   Application("Google Chrome").activate();
   win.index = 1;
   app.delay(0.2);
-  const image = captureWindowImage(app, winRect(win));
-  return { window_id: Number(req.window_id), url: tab.url(), title: safeTitle(tab), image };
+  const rect = winRect(win);
+  const image = captureWindowImage(app, rect);
+  const fit = fitDim(rect.w, rect.h, SHOT_MAX_DIM);
+  return { window_id: Number(req.window_id), url: tab.url(), title: safeTitle(tab), image, rect, image_w: fit.w, image_h: fit.h };
+}
+
+// Point BOON's vision model picked out on a screenshot, read back from the live page itself (not guessed from
+// the picture) so browser_click/browser_type can refuse a submit/pay/send/sign-in-shaped target before it's
+// clicked — see index.html's lookRisky(). Read-only: looking only ever inspects, never acts.
+function browserInspectPoint(req) {
+  const win = findBrowserWindow(req.window_id);
+  const tab = activeTab(win);
+  const x = Number(req.x), y = Number(req.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("missing x/y");
+  const js = `(function(){
+    var el = document.elementFromPoint(${x}, ${y});
+    if (!el) return "null";
+    var form = el.closest ? el.closest("form") : null;
+    var a = el.closest ? el.closest("a") : null;
+    var btn = el.closest ? el.closest('button, [role="button"], input[type="submit"], input[type="button"]') : null;
+    var info = {
+      tag: el.tagName ? el.tagName.toLowerCase() : "",
+      type: (el.getAttribute && el.getAttribute("type")) || "",
+      text: String((el.innerText || el.value || (el.getAttribute && el.getAttribute("aria-label")) || el.title || "")).slice(0, 100),
+      href: a ? String(a.href || "") : "",
+      formAction: form ? String(form.getAttribute("action") || "") : "",
+      buttonText: btn ? String((btn.innerText || btn.value || (btn.getAttribute && btn.getAttribute("aria-label")) || "")).slice(0, 100) : "",
+    };
+    return JSON.stringify(info);
+  })()`;
+  const raw = execJs(tab, js);
+  let element = null;
+  try { element = JSON.parse(raw); } catch (e) {}
+  return { window_id: Number(req.window_id), x, y, element };
+}
+
+function browserClickAt(req) {
+  const win = findBrowserWindow(req.window_id);
+  const x = Math.round(Number(req.x)), y = Math.round(Number(req.y));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("missing x/y");
+  Application("Google Chrome").activate();
+  win.index = 1;
+  const app = stdApp();
+  app.delay(0.15);
+  try { systemEvents().click({ at: [x, y] }); }
+  catch (e) {
+    throw new Error(`couldn't click there (${String((e && e.message) || e)}). BOON may need Accessibility permission: ` +
+      `System Settings → Privacy & Security → Accessibility → allow the BOON Focus helper.`);
+  }
+  return { window_id: Number(req.window_id), x, y };
+}
+function browserTypeAt(req) {
+  const win = findBrowserWindow(req.window_id);
+  const x = Math.round(Number(req.x)), y = Math.round(Number(req.y));
+  const text = str(req.text, 2000);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("missing x/y");
+  Application("Google Chrome").activate();
+  win.index = 1;
+  const app = stdApp();
+  app.delay(0.15);
+  const SE = systemEvents();
+  try {
+    SE.click({ at: [x, y] });
+    app.delay(0.15);
+    SE.keystroke(text);
+  } catch (e) {
+    throw new Error(`couldn't type there (${String((e && e.message) || e)}). BOON may need Accessibility permission: ` +
+      `System Settings → Privacy & Security → Accessibility → allow the BOON Focus helper.`);
+  }
+  return { window_id: Number(req.window_id), x, y, typed: text.length };
 }
 
 function dispatch(req) {
@@ -426,6 +506,9 @@ function dispatch(req) {
   if (req.action === "browser_navigate") return browserNavigate(req);
   if (req.action === "browser_read") return browserRead(req);
   if (req.action === "browser_screenshot") return browserScreenshot(req);
+  if (req.action === "browser_inspect_point") return browserInspectPoint(req);
+  if (req.action === "browser_click_at") return browserClickAt(req);
+  if (req.action === "browser_type_at") return browserTypeAt(req);
   throw new Error(`no such action: ${req.action}`);
 }
 
@@ -438,4 +521,4 @@ function run(argv) {
 }
 
 // A Node test can require() this file and call dispatch() with its own stand-in Application(), without osascript.
-if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText, relevant, createReminder, completeReminder, winRect };
+if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText, relevant, createReminder, completeReminder, winRect, fitDim };

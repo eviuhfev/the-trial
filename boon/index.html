@@ -2886,6 +2886,82 @@ dialog input:focus { border-color: #4a4f8a; }
       },
     };
     macAgentPrompt += " To browse a real page in its own window instead of just fetching it with read_page — e.g. because you'll look at it more than once or move between pages — call browser_open with a link, then browser_read to see its text; call browser_navigate with the same window_id to go to another page in that same window.";
+
+    // ----- browser click/type (Day 7) -----
+    // Screenshots a browser_open window and asks a local vision model where a plainly-described target is, then
+    // scales its answer back from the (possibly resized) screenshot to the window's real on-screen point — the
+    // model never sees real screen coordinates, only this image, so its answer is always in that image's own
+    // pixels. browser_inspect_point then reads what's actually at that point from the live page, so the decision
+    // to stop (see lookRisky below) is made from the real DOM, not from a guess about what the screenshot shows.
+    async function locateOnPage(windowId, target) {
+      const shot = await macAction("browser_screenshot", { window_id: windowId });
+      const prompt = `Screenshot of a web browser window, ${shot.image_w}x${shot.image_h} pixels. Find this on the page: "${target}". ` +
+        `Reply with ONLY its center point as two numbers "x,y" in this image's own pixels, nothing else. If it isn't visible, reply exactly "not found".`;
+      const reply = await callVisionModel(shot.image, prompt);
+      if (/not found/i.test(reply)) throw new Error(`Couldn't find "${target}" on the page.`);
+      const m = /(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/.exec(reply);
+      if (!m) throw new Error(`Couldn't tell where "${target}" is on the page.`);
+      const scaleX = shot.rect.w / shot.image_w, scaleY = shot.rect.h / shot.image_h;
+      const x = Math.round(shot.rect.x + Number(m[1]) * scaleX), y = Math.round(shot.rect.y + Number(m[2]) * scaleY);
+      const look = await macAction("browser_inspect_point", { window_id: windowId, x, y });
+      return { x, y, element: look.element };
+    }
+    // Defense-in-depth, not the only line of defense — the model is also told not to do these. Matches on the
+    // target's own visible text (what a person would react to), not on markup like type="submit" alone, since
+    // that would also catch an ordinary search button and make click-driven browsing nearly useless.
+    const RISKY_WORDS = /\b(submit|pay(?:ment)?s?|buy|purchase|checkout|place\s*order|order\s*now|send|sign[\s-]?in|sign[\s-]?up|log[\s-]?in|log[\s-]?out|confirm|subscribe|delete|remove|transfer|donate|agree|accept)\b/i;
+    function lookRisky(el) {
+      if (!el) return "";
+      const text = [el.text, el.buttonText].filter(Boolean).join(" ").trim();
+      if (RISKY_WORDS.test(text)) return text.slice(0, 60) || "that";
+      if (el.type === "password") return "a password field";
+      return "";
+    }
+    TOOLS.browser_click = {
+      label: "Clicked on the page",
+      spec: {
+        description: "Click something on the page open in a browser_open window, described in plain words (e.g. 'the search button' or 'the first result link'). " +
+          "Refuses anything that looks like submit, pay, buy, checkout, send, sign in/up, log in/out, confirm, subscribe, delete, or remove — tell the user to do those themselves.",
+        parameters: { type: "object", properties: {
+          window_id: { type: "number", description: "The window_id from browser_open" },
+          target: { type: "string", description: "Plain description of what to click" },
+        }, required: ["window_id", "target"] },
+      },
+      show: (a) => a.target || "",
+      run: async (a) => {
+        const target = String(a.target || "").trim();
+        if (!target) throw new Error("Say what to click.");
+        const { x, y, element } = await locateOnPage(a.window_id, target);
+        const risk = lookRisky(element);
+        if (risk) throw new Error(`Won't click that — it looks like ${risk}. Tell the user to do that step themselves.`);
+        await macAction("browser_click_at", { window_id: a.window_id, x, y });
+        return `Clicked "${target}".`;
+      },
+    };
+    TOOLS.browser_type = {
+      label: "Typed on the page",
+      spec: {
+        description: "Click a text field on the page (described in plain words) and type into it. Refuses a password field — tell the user to do that themselves.",
+        parameters: { type: "object", properties: {
+          window_id: { type: "number", description: "The window_id from browser_open" },
+          target: { type: "string", description: "Plain description of the field, e.g. 'the search box'" },
+          text: { type: "string", description: "What to type" },
+        }, required: ["window_id", "target", "text"] },
+      },
+      show: (a) => `${a.target || ""}: ${a.text || ""}`,
+      run: async (a) => {
+        const target = String(a.target || "").trim();
+        const text = String(a.text ?? "");
+        if (!target) throw new Error("Say which field to type into.");
+        const { x, y, element } = await locateOnPage(a.window_id, target);
+        const risk = lookRisky(element);
+        if (risk) throw new Error(`Won't type there — it looks like ${risk}. Tell the user to do that step themselves.`);
+        await macAction("browser_type_at", { window_id: a.window_id, x, y, text });
+        return `Typed into "${target}".`;
+      },
+    };
+    macAgentPrompt += " To click something in a browser_open window, call browser_click with a plain description of it; to type into a field, call browser_type. " +
+      "Both refuse anything shaped like submit, pay, send, sign in/up, log in/out, confirm, subscribe, delete, or remove, and a password field — if the task needs one of those, tell the user what to click/type and let them do that step.";
   }
 
   // ----- action log -----
@@ -3127,6 +3203,36 @@ dialog input:focus { border-color: #4a4f8a; }
     const msg = j.choices?.[0]?.message;
     if (!msg) throw new Error("The model sent back an empty reply.");
     return msg;
+  }
+
+  // A one-off call to a local vision model, for browser_click/browser_type to see a screenshot — kept separate
+  // from callModel rather than reusing it, so it never attaches TOOL_SPECS (gemma3:4b doesn't call tools, and
+  // this call has nothing to do with the chat it's running inside — it never touches chat.messages). Always
+  // local: a live screenshot can show anything on the user's screen, so it's never sent to a cloud model.
+  async function callVisionModel(imageDataUrl, prompt) {
+    const v = models.find((m) => m.vision && m.local);
+    if (!v) throw new Error(`BOON needs a local vision model to see the page. Run "ollama pull gemma3:4b", then try again.`);
+    let res;
+    try {
+      res = await fetch(OLLAMA + "/v1/chat/completions", {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: v.id.slice(LOCAL.length), stream: false, reasoning_effort: "none", max_tokens: REPLY_TOKENS,
+          messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: imageDataUrl } }] }],
+        }),
+      });
+    } catch (err) {
+      if (err.name !== "AbortError") throw new Error("Couldn't reach Ollama on this computer. Make sure the Ollama app is running, then try again.");
+      throw err;
+    }
+    if (!res.ok) throw new Error(`${v.label} returned an error (${res.status}).`);
+    const j = await res.json();
+    if (j.error) throw new Error(j.error.message || `${v.label} returned an error.`);
+    const content = j.choices?.[0]?.message?.content;
+    if (!content) throw new Error(`${v.label} sent back an empty reply.`);
+    return String(content).trim();
   }
 
   // A local model's 4,096-token window holds the instructions and tools (~2,600 tokens, which Ollama keeps cached),
