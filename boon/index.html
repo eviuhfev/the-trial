@@ -2834,6 +2834,58 @@ dialog input:focus { border-color: #4a4f8a; }
       },
     };
     macAgentPrompt += " To search the web, call web_search. To read a specific page — a web_search result's link or one the user gave you — call read_page, and cite the link you read in your answer.";
+
+    TOOLS.browser_open = {
+      label: "Opened a browser window",
+      spec: {
+        description: "Open a new Chrome window that you control on its own, separate from the user's own tabs, and go to a page in it. " +
+          "Use this instead of read_page when you'll need to look at the page again or go to another page from it. Returns a window_id — " +
+          "pass that to browser_navigate or browser_read to keep acting on the same window.",
+        parameters: { type: "object", properties: {
+          url: { type: "string", description: "The page's full http(s) link to open" },
+        }, required: ["url"] },
+      },
+      show: (a) => a.url || "",
+      run: async (a) => {
+        const url = String(a.url || "").trim();
+        if (!/^https?:\/\//i.test(url)) throw new Error("Give a full link starting with http:// or https://.");
+        const res = await macAction("browser_open", { url });
+        return `Opened window_id ${res.window_id} at ${res.title ? res.title + " — " : ""}${res.url}.`;
+      },
+    };
+    TOOLS.browser_navigate = {
+      label: "Navigated the browser",
+      spec: {
+        description: "Go to a different page in a Chrome window browser_open already opened.",
+        parameters: { type: "object", properties: {
+          window_id: { type: "number", description: "The window_id a previous browser_open returned" },
+          url: { type: "string", description: "The page's full http(s) link to go to" },
+        }, required: ["window_id", "url"] },
+      },
+      show: (a) => a.url || "",
+      run: async (a) => {
+        const url = String(a.url || "").trim();
+        if (!/^https?:\/\//i.test(url)) throw new Error("Give a full link starting with http:// or https://.");
+        const res = await macAction("browser_navigate", { window_id: a.window_id, url });
+        return `window_id ${res.window_id} is now at ${res.title ? res.title + " — " : ""}${res.url}.`;
+      },
+    };
+    TOOLS.browser_read = {
+      label: "Read the browser page",
+      spec: {
+        description: "Read the visible text of the page currently open in a browser_open window, so you can answer from it or decide what to do next. Cite the URL you read in your answer.",
+        parameters: { type: "object", properties: {
+          window_id: { type: "number", description: "The window_id a previous browser_open returned" },
+        }, required: ["window_id"] },
+      },
+      show: () => "",
+      run: async (a) => {
+        const res = await macAction("browser_read", { window_id: a.window_id });
+        const body = res.truncated ? `${res.text}\n\n[page cut short]` : res.text;
+        return `${res.title ? res.title + "\n" : ""}${res.url}\n\n${body}`;
+      },
+    };
+    macAgentPrompt += " To browse a real page in its own window instead of just fetching it with read_page — e.g. because you'll look at it more than once or move between pages — call browser_open with a link, then browser_read to see its text; call browser_navigate with the same window_id to go to another page in that same window.";
   }
 
   // ----- action log -----

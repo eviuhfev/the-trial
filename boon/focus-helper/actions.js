@@ -304,6 +304,117 @@ function openApp(req) {
   return { app: match };
 }
 
+// ----- browser control (Day 6) -----
+// A Chrome window BOON's robot drives on its own, separate from whatever tab the user is reading. Each window is
+// addressed by Chrome's own per-window id (stable for that window's lifetime), handed back from browser_open and
+// passed into every later call — nothing is kept in memory here between calls, since each dispatch() runs in its
+// own fresh osascript process.
+const BROWSER_LOAD_TIMEOUT = 10; // seconds to wait for a navigation to finish before reading/screenshotting anyway
+const SHOT_MAX_DIM = 1280;       // longest side a screenshot is resized to, so the base64 JPEG comfortably clears
+                                  // native messaging's ~1MB host-to-extension message limit
+const SHOT_QUALITY = 60;
+
+function stdApp() {
+  const app = Application.currentApplication();
+  app.includeStandardAdditions = true;
+  return app;
+}
+
+function findBrowserWindow(windowId) {
+  const id = Number(windowId);
+  if (!Number.isFinite(id)) throw new Error("missing window_id");
+  const windows = Application("Google Chrome").windows();
+  for (const w of windows) { if (w.id() === id) return w; }
+  throw new Error("that browser window isn't open anymore — open a new one with browser_open");
+}
+// Chrome's own idiom (see open-boon.js) is "active tab index", a 1-based position into the window's tab list,
+// not a direct "active tab" property.
+function activeTab(win) {
+  return win.tabs()[win.activeTabIndex() - 1];
+}
+function safeTitle(tab) {
+  try { return String(tab.title() || "").trim().slice(0, 200); } catch (e) { return ""; }
+}
+function waitForLoad(app, tab) {
+  const deadline = Date.now() + BROWSER_LOAD_TIMEOUT * 1000;
+  while (Date.now() < deadline) {
+    let loading;
+    try { loading = tab.loading(); } catch (e) { return; }
+    if (!loading) return;
+    app.delay(0.3);
+  }
+}
+// Chrome's window "bounds" can come back either as {x,y,width,height} or as an AppleScript-style
+// [left,top,right,bottom] rectangle depending on how the dictionary reports it — handle both.
+function winRect(win) {
+  const b = win.bounds();
+  if (Array.isArray(b)) { const x = b[0], y = b[1]; return { x, y, w: b[2] - x, h: b[3] - y }; }
+  return { x: b.x, y: b.y, w: b.width, h: b.height };
+}
+function execJs(tab, js) {
+  try { return tab.execute({ javascript: js }); }
+  catch (e) {
+    throw new Error(`couldn't read that page's content (${String((e && e.message) || e)}). If this keeps happening, ` +
+      `turn on Chrome's View menu → Developer → "Allow JavaScript from Apple Events".`);
+  }
+}
+function captureWindowImage(app, rect) {
+  const base = "/tmp/boon-shot-" + Date.now() + "-" + Math.floor(Math.random() * 1e6);
+  const png = base + ".png", jpg = base + ".jpg";
+  try {
+    const region = `${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(Math.max(1, rect.w))},${Math.round(Math.max(1, rect.h))}`;
+    app.doShellScript("screencapture -x -R" + region + " " + sh(png));
+    app.doShellScript(`sips -Z ${SHOT_MAX_DIM} -s format jpeg -s formatOptions ${SHOT_QUALITY} ${sh(png)} --out ${sh(jpg)} >/dev/null 2>&1`);
+    const b64 = app.doShellScript("base64 -i " + sh(jpg), { alteringLineEndings: false }).replace(/\s+/g, "");
+    if (!b64) throw new Error("empty screenshot");
+    return "data:image/jpeg;base64," + b64;
+  } catch (e) {
+    throw new Error("couldn't take a screenshot of that window");
+  } finally {
+    try { app.doShellScript("rm -f " + sh(png) + " " + sh(jpg)); } catch (e) {}
+  }
+}
+
+function browserOpen(req) {
+  const url = checkUrl(str(req.url, 2000));
+  const Chrome = Application("Google Chrome");
+  Chrome.activate();
+  const win = Chrome.Window({});
+  Chrome.windows.push(win);
+  const tab = win.tabs[0];
+  tab.url = url;
+  win.index = 1;
+  waitForLoad(stdApp(), tab);
+  return { window_id: win.id(), url, title: safeTitle(tab) };
+}
+function browserNavigate(req) {
+  const win = findBrowserWindow(req.window_id);
+  const url = checkUrl(str(req.url, 2000));
+  const tab = activeTab(win);
+  tab.url = url;
+  win.index = 1;
+  waitForLoad(stdApp(), tab);
+  return { window_id: Number(req.window_id), url, title: safeTitle(tab) };
+}
+function browserRead(req) {
+  const win = findBrowserWindow(req.window_id);
+  const tab = activeTab(win);
+  const text = execJs(tab, "document.body ? document.body.innerText : ''");
+  const clean = String(text || "").replace(/[ \t]+/g, " ").replace(/[ \t]*\n[ \t]*/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  if (!clean) throw new Error("that page had nothing BOON could read");
+  return { window_id: Number(req.window_id), url: tab.url(), title: safeTitle(tab), text: clean.slice(0, MAX_TEXT), truncated: clean.length > MAX_TEXT };
+}
+function browserScreenshot(req) {
+  const win = findBrowserWindow(req.window_id);
+  const tab = activeTab(win);
+  const app = stdApp();
+  Application("Google Chrome").activate();
+  win.index = 1;
+  app.delay(0.2);
+  const image = captureWindowImage(app, winRect(win));
+  return { window_id: Number(req.window_id), url: tab.url(), title: safeTitle(tab), image };
+}
+
 function dispatch(req) {
   if (req.action === "create_reminder") return createReminder(req);
   if (req.action === "complete_reminder") return completeReminder(req);
@@ -311,6 +422,10 @@ function dispatch(req) {
   if (req.action === "open_app") return openApp(req);
   if (req.action === "web_search") return webSearch(req);
   if (req.action === "fetch_url") return fetchUrl(req);
+  if (req.action === "browser_open") return browserOpen(req);
+  if (req.action === "browser_navigate") return browserNavigate(req);
+  if (req.action === "browser_read") return browserRead(req);
+  if (req.action === "browser_screenshot") return browserScreenshot(req);
   throw new Error(`no such action: ${req.action}`);
 }
 
@@ -323,4 +438,4 @@ function run(argv) {
 }
 
 // A Node test can require() this file and call dispatch() with its own stand-in Application(), without osascript.
-if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText, relevant, createReminder, completeReminder };
+if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText, relevant, createReminder, completeReminder, winRect };
