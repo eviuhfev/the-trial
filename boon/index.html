@@ -3159,6 +3159,20 @@ dialog input:focus { border-color: #4a4f8a; }
   els.modelSelect.addEventListener("change", () => { if (agentMode) warmAgent(); });
   els.input.addEventListener("input", () => { if (agentMode) warmAgent(); });
 
+  // messages stores tool_calls[].function.arguments as an OpenAI-shape JSON string (needed for the cloud path
+  // and BOON's own rendering/parseArgs elsewhere) and matches a tool result to its call via tool_call_id. Native
+  // Ollama's /api/chat wants arguments as an object, not a string, and reads a result message's tool_name rather
+  // than tool_call_id — so local requests get a translated copy of messages; messages itself is untouched.
+  const toNativeMessages = (msgs) => {
+    const nameById = new Map();
+    for (const m of msgs) for (const c of m.tool_calls || []) nameById.set(c.id, c.function.name);
+    return msgs.map((m) => {
+      if (m.tool_calls) return { ...m, tool_calls: m.tool_calls.map((c) => ({ ...c, function: { ...c.function, arguments: parseArgs(c.function.arguments) } })) };
+      if (m.role === "tool") return { ...m, tool_name: nameById.get(m.tool_call_id) || "" };
+      return m;
+    });
+  };
+
   async function callModel(model, messages, key) {
     const local = isLocal(model);
     let res;
@@ -3176,7 +3190,7 @@ dialog input:focus { border-color: #4a4f8a; }
         // Ollama's native /api/chat, not the OpenAI-compatible /v1/chat/completions, so options.num_ctx actually
         // takes effect (the /v1 endpoint silently ignores it, confirmed 2026-10-03) — see the LOCAL_CTX comment below.
         body: JSON.stringify(local
-          ? { model: model.slice(LOCAL.length), messages, tools: TOOL_SPECS, stream: false, think: false, options: { num_ctx: LOCAL_CTX, num_predict: REPLY_TOKENS } }
+          ? { model: model.slice(LOCAL.length), messages: toNativeMessages(messages), tools: TOOL_SPECS, stream: false, think: false, options: { num_ctx: LOCAL_CTX, num_predict: REPLY_TOKENS } }
           : { model, messages, tools: TOOL_SPECS, stream: false }),
       });
     } catch (err) {
@@ -3238,11 +3252,13 @@ dialog input:focus { border-color: #4a4f8a; }
   }
 
   // A local model's context window holds the instructions and tools, earlier turns, this task's steps and the
-  // reply. Going over makes Ollama drop the cached part (slow again) or the task. By Day 6-7 (29 tools) the
-  // instructions+tools alone reached ~4,000 tokens on their own — right at the old 4,096 window, leaving ~0 room
-  // for anything else and busting the prefix cache on every single task (measured 2026-10-03). Local calls now
-  // ask Ollama for an 8,192 window directly via options.num_ctx on the native /api/chat endpoint, since the
-  // OpenAI-compatible /v1/chat/completions endpoint silently ignores num_ctx (also confirmed 2026-10-03).
+  // reply. Going over makes Ollama drop the cached part (slow again) or the task. This formula's own estimate
+  // runs on the high side (by Day 6-7's 29 tools it said ~4,000 of the old 4,096-token window); Ollama's actual
+  // count (prompt_eval_count), measured live 2026-10-03, was ~2,437 — real headroom, not an overflow. Raised to
+  // 8,192 anyway as cheap headroom for tools still to come (confirmed +0.6 GB resident on a 16 GB Mac, harmless)
+  // via options.num_ctx on Ollama's native /api/chat, since the OpenAI-compatible /v1/chat/completions endpoint
+  // silently ignores num_ctx. See [[boon-agent-speed]] — the slowness that prompted this was NOT context overflow;
+  // still investigating (model-swap churn between qwen3/vision/gemma3, warm-up, Mac sleep are the live leads).
   // Rough count, checked against the Qwen3 tokenizer and on the high side for English: a token per digit and per
   // Chinese/Japanese/Korean character, 1.5 per other non-English character (accents, emoji), 3.2 other characters a token.
   const LOCAL_CTX = 8192, REPLY_TOKENS = 600, PAST_TOKENS = 700, PAST_TURNS = 6, TOOL_RESULT_MAX = 2000;
