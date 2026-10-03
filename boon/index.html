@@ -2838,7 +2838,7 @@ dialog input:focus { border-color: #4a4f8a; }
     TOOLS.browser_open = {
       label: "Opened a browser window",
       spec: {
-        description: "Open a new Chrome window that you control on its own, separate from the user's own tabs, and go to a page in it. " +
+        description: "Open a new browser window that you control on its own, separate from the user's own tabs, and go to a page in it. " +
           "This window has none of the user's saved logins or cookies — it can't check their email or any signed-in account, so don't try. " +
           "Use this instead of read_page when you'll need to look at the page again or go to another page from it. Returns a window_id — " +
           "pass that to browser_navigate or browser_read to keep acting on the same window.",
@@ -2857,7 +2857,7 @@ dialog input:focus { border-color: #4a4f8a; }
     TOOLS.browser_navigate = {
       label: "Navigated the browser",
       spec: {
-        description: "Go to a different page in a Chrome window browser_open already opened.",
+        description: "Go to a different page in a window browser_open already opened.",
         parameters: { type: "object", properties: {
           window_id: { type: "number", description: "The window_id a previous browser_open returned" },
           url: { type: "string", description: "The page's full http(s) link to go to" },
@@ -2889,13 +2889,13 @@ dialog input:focus { border-color: #4a4f8a; }
     macAgentPrompt += " To browse a real page in its own window instead of just fetching it with read_page — e.g. because you'll look at it more than once or move between pages — call browser_open with a link, then browser_read to see its text; call browser_navigate with the same window_id to go to another page in that same window. That window is signed out of everything — never tell the user it checked an account or inbox there.";
 
     // ----- browser click/type (Day 7) -----
-    // Screenshots a browser_open window and asks a local vision model where a plainly-described target is, then
-    // scales its answer back from the (possibly resized) screenshot to the window's real on-screen point — the
-    // model never sees real screen coordinates, only this image, so its answer is always in that image's own
-    // pixels. That point is only a rough starting guess, though: browser_inspect_point finds the actual element
-    // there and hands back ITS OWN precise click point (computed from the live page's layout) — so what gets
-    // safety-checked (see lookRisky below) and what later gets clicked are guaranteed to be the exact same
-    // element, not two independent guesses that can drift apart.
+    // Screenshots a browser_open window and asks a local vision model where a plainly-described target is. The
+    // screenshot is always the browser's own fixed-size viewport, so the model's answer is already in real
+    // click pixels — nothing to scale back from a resized image. That point is only a rough starting guess,
+    // though: browser_inspect_point finds the actual element there and hands back ITS OWN precise click point
+    // (computed from the live page's layout) — so what gets safety-checked (see lookRisky below) and what
+    // later gets clicked are guaranteed to be the exact same element, not two independent guesses that can
+    // drift apart.
     async function locateOnPage(windowId, target) {
       const shot = await macAction("browser_screenshot", { window_id: windowId });
       const prompt = `Screenshot of a web browser window, ${shot.image_w}x${shot.image_h} pixels. Find this on the page: "${target}". ` +
@@ -2904,12 +2904,8 @@ dialog input:focus { border-color: #4a4f8a; }
       if (/not found/i.test(reply)) throw new Error(`Couldn't find "${target}" on the page.`);
       const m = /(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/.exec(reply);
       if (!m) throw new Error(`Couldn't tell where "${target}" is on the page.`);
-      const scaleX = shot.rect.w / shot.image_w, scaleY = shot.rect.h / shot.image_h;
-      const guessX = Math.round(shot.rect.x + Number(m[1]) * scaleX), guessY = Math.round(shot.rect.y + Number(m[2]) * scaleY);
-      if (guessX < shot.rect.x || guessX > shot.rect.x + shot.rect.w || guessY < shot.rect.y || guessY > shot.rect.y + shot.rect.h) {
-        throw new Error(`Couldn't find "${target}" — that pointed outside the window.`);
-      }
-      const look = await macAction("browser_inspect_point", { window_id: windowId, x: guessX, y: guessY });
+      const x = Math.round(Number(m[1])), y = Math.round(Number(m[2]));
+      const look = await macAction("browser_inspect_point", { window_id: windowId, x, y });
       if (!look.element || !look.element.in_window) throw new Error(`Couldn't find "${target}" precisely enough to act on.`);
       return { x: look.element.click_x, y: look.element.click_y, element: look.element };
     }

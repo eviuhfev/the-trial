@@ -304,273 +304,28 @@ function openApp(req) {
   return { app: match };
 }
 
-// ----- browser control (Day 6) -----
-// A Chrome window BOON's robot drives on its own, separate from whatever tab the user is reading. Each window is
-// addressed by Chrome's own per-window id (stable for that window's lifetime), handed back from browser_open and
-// passed into every later call — nothing is kept in memory here between calls, since each dispatch() runs in its
-// own fresh osascript process.
-const BROWSER_LOAD_TIMEOUT = 10; // seconds to wait for a navigation to finish before reading/screenshotting anyway
-const SHOT_MAX_DIM = 1280;       // longest side a screenshot is resized to, so the base64 JPEG comfortably clears
-                                  // native messaging's ~1MB host-to-extension message limit
-const SHOT_QUALITY = 60;
-// A Chrome window BOON's robot opens lives in its own profile, with none of the user's cookies or logins — a
-// page it reads (or a prompt hidden in one) can't turn into "go read the user's real Gmail" this way, since
-// there's nothing signed in to read. Reused across tasks (not wiped each time) so Chrome's one-time first-run
-// cost is paid once, not on every browser_open.
-const BROWSER_PROFILE_DIR = "$HOME/Library/Application Support/BOON Browser";
-// Defense in depth with index.html's own lookRisky() — this is the Mac helper's own copy of the same check,
-// re-applied right before a real click/keystroke fires, so a bug or bypass upstream still can't reach a
-// submit/pay/send/sign-in-shaped target. Keep in sync with index.html's RISKY_WORDS if either changes.
-const RISKY_WORDS = /\b(submit|pay(?:ment)?s?|buy|purchase|checkout|place\s*order|order\s*now|send|sign[\s-]?in|sign[\s-]?up|log[\s-]?in|log[\s-]?out|confirm|subscribe|delete|remove|transfer|donate|agree|accept)\b/i;
-function riskyElement(el) {
-  if (!el) return "";
-  const text = [el.text, el.buttonText].filter(Boolean).join(" ").trim();
-  if (RISKY_WORDS.test(text)) return text.slice(0, 60) || "that";
-  if (el.type === "password" || /current-password|new-password/i.test(el.autocomplete || "")) return "a password field";
-  return "";
-}
-
-function stdApp() {
+// ----- browser control (Day 6-7) -----
+// A browser window BOON's robot drives on its own, separate from whatever tab the user is reading — entirely
+// through browser-driver.js (a small Node/Playwright script install.sh copies alongside this file). It drives
+// an isolated Chromium instance over the DevTools protocol, never through Apple Events: a second process of
+// the user's REAL Chrome (however it's launched) makes Apple Events address either one unpredictably, which
+// would break boon/desktop-icon/open-boon.js's own Chrome-finding script — a feature this one must not touch.
+// Chromium is a different application entirely, so it can run alongside the user's real Chrome with no such
+// conflict. See browser-driver.js itself for the rest of the design (profile isolation, the risk re-check
+// right before a click/keystroke, why it's Playwright's own managed browser and not the user's Chrome).
+function runBrowserDriver(req) {
   const app = Application.currentApplication();
   app.includeStandardAdditions = true;
-  return app;
-}
-function systemEvents() {
-  const SE = Application("System Events");
-  SE.includeStandardAdditions = true;
-  return SE;
-}
-// How screencapture's own -R region (real screen points) maps onto the resized screenshot BOON's vision model
-// sees, so a click/type can scale the model's pixel answer back to a real point. sips -Z only ever shrinks, never
-// enlarges, so this mirrors that rule exactly rather than re-measuring the file after the fact.
-function fitDim(w, h, maxDim) {
-  const scale = Math.min(1, maxDim / Math.max(w, h));
-  return { w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)), scale };
-}
-
-function findBrowserWindow(windowId) {
-  const id = Number(windowId);
-  if (!Number.isFinite(id)) throw new Error("missing window_id");
-  const windows = Application("Google Chrome").windows();
-  for (const w of windows) { if (w.id() === id) return w; }
-  throw new Error("that browser window isn't open anymore — open a new one with browser_open");
-}
-// Chrome's own idiom (see open-boon.js) is "active tab index", a 1-based position into the window's tab list,
-// not a direct "active tab" property.
-function activeTab(win) {
-  return win.tabs()[win.activeTabIndex() - 1];
-}
-function safeTitle(tab) {
-  try { return String(tab.title() || "").trim().slice(0, 200); } catch (e) { return ""; }
-}
-function waitForLoad(app, tab) {
-  const deadline = Date.now() + BROWSER_LOAD_TIMEOUT * 1000;
-  while (Date.now() < deadline) {
-    let loading;
-    try { loading = tab.loading(); } catch (e) { return; }
-    if (!loading) return;
-    app.delay(0.3);
-  }
-}
-// Chrome's window "bounds" can come back either as {x,y,width,height} or as an AppleScript-style
-// [left,top,right,bottom] rectangle depending on how the dictionary reports it — handle both.
-function winRect(win) {
-  const b = win.bounds();
-  if (Array.isArray(b)) { const x = b[0], y = b[1]; return { x, y, w: b[2] - x, h: b[3] - y }; }
-  return { x: b.x, y: b.y, w: b.width, h: b.height };
-}
-// The helper is the last place that can refuse before a real click/keystroke fires (same idea as openApp's own
-// allow-list re-check) — so click_at/type_at clamp to the window's own screen rect themselves, rather than
-// trusting whatever point index.html computed.
-function withinWindow(win, x, y) {
-  const r = winRect(win);
-  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-}
-function execJs(tab, js) {
-  try { return tab.execute({ javascript: js }); }
-  catch (e) {
-    throw new Error(`couldn't read that page's content (${String((e && e.message) || e)}). If this keeps happening, ` +
-      `turn on Chrome's View menu → Developer → "Allow JavaScript from Apple Events".`);
-  }
-}
-function captureWindowImage(app, rect) {
-  const base = "/tmp/boon-shot-" + Date.now() + "-" + Math.floor(Math.random() * 1e6);
-  const png = base + ".png", jpg = base + ".jpg";
-  try {
-    const region = `${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(Math.max(1, rect.w))},${Math.round(Math.max(1, rect.h))}`;
-    app.doShellScript("screencapture -x -R" + region + " " + sh(png));
-    app.doShellScript(`sips -Z ${SHOT_MAX_DIM} -s format jpeg -s formatOptions ${SHOT_QUALITY} ${sh(png)} --out ${sh(jpg)} >/dev/null 2>&1`);
-    const b64 = app.doShellScript("base64 -i " + sh(jpg), { alteringLineEndings: false }).replace(/\s+/g, "");
-    if (!b64) throw new Error("empty screenshot");
-    return "data:image/jpeg;base64," + b64;
-  } catch (e) {
-    throw new Error("couldn't take a screenshot of that window");
-  } finally {
-    try { app.doShellScript("rm -f " + sh(png) + " " + sh(jpg)); } catch (e) {}
-  }
-}
-
-// Waits for a window that wasn't in `beforeIds` to show up, rather than trusting a constructor's return value —
-// sidesteps needing to know whether JXA's "make a window, push it" idiom even applies to a window opened in a
-// different Chrome process/profile (untested; `open -na` is what actually creates the window here).
-function waitForNewWindow(Chrome, beforeIds) {
-  const deadline = Date.now() + BROWSER_LOAD_TIMEOUT * 1000;
-  while (Date.now() < deadline) {
-    let now = [];
-    try { now = Chrome.windows(); } catch (e) {}
-    for (const w of now) {
-      let id;
-      try { id = w.id(); } catch (e) { continue; }
-      if (!beforeIds.has(id)) return w;
-    }
-    stdApp().delay(0.2);
-  }
-  return null;
-}
-function browserOpen(req) {
-  const url = checkUrl(str(req.url, 2000));
-  const Chrome = Application("Google Chrome");
-  const before = new Set(Chrome.running() ? Chrome.windows().map((w) => w.id()) : []);
-  const app = stdApp();
-  // -na: a new instance, in its own profile dir — not a new window in the user's own already-running Chrome.
-  // --no-first-run/--no-default-browser-check: this profile is brand new every first launch, so without them
-  // Chrome would show its own onboarding instead of the page BOON asked for.
-  app.doShellScript(`open -na "Google Chrome" --args --user-data-dir="${BROWSER_PROFILE_DIR}" --no-first-run --no-default-browser-check ` + sh(url));
-  const win = waitForNewWindow(Chrome, before);
-  if (!win) throw new Error("Chrome didn't open a new window in time — if a permission prompt appeared (Automation/Accessibility), answer it and try again.");
-  const tab = activeTab(win);
-  waitForLoad(app, tab);
-  win.index = 1;
-  return { window_id: win.id(), url, title: safeTitle(tab) };
-}
-function browserNavigate(req) {
-  const win = findBrowserWindow(req.window_id);
-  const url = checkUrl(str(req.url, 2000));
-  const tab = activeTab(win);
-  tab.url = url;
-  win.index = 1;
-  waitForLoad(stdApp(), tab);
-  return { window_id: Number(req.window_id), url, title: safeTitle(tab) };
-}
-function browserRead(req) {
-  const win = findBrowserWindow(req.window_id);
-  const tab = activeTab(win);
-  const text = execJs(tab, "document.body ? document.body.innerText : ''");
-  const clean = String(text || "").replace(/[ \t]+/g, " ").replace(/[ \t]*\n[ \t]*/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  if (!clean) throw new Error("that page had nothing BOON could read");
-  return { window_id: Number(req.window_id), url: tab.url(), title: safeTitle(tab), text: clean.slice(0, MAX_TEXT), truncated: clean.length > MAX_TEXT };
-}
-function browserScreenshot(req) {
-  const win = findBrowserWindow(req.window_id);
-  const tab = activeTab(win);
-  const app = stdApp();
-  Application("Google Chrome").activate();
-  win.index = 1;
-  app.delay(0.2);
-  const rect = winRect(win);
-  const image = captureWindowImage(app, rect);
-  const fit = fitDim(rect.w, rect.h, SHOT_MAX_DIM);
-  return { window_id: Number(req.window_id), url: tab.url(), title: safeTitle(tab), image, rect, image_w: fit.w, image_h: fit.h };
-}
-
-// (x, y) here is a SCREEN point (what System Events clicks with), but document.elementFromPoint wants VIEWPORT
-// CSS coordinates (relative to the page, below Chrome's own tab strip/toolbar) — those are NOT the same point,
-// and conflating them was the bug a Mac-side review caught: the safety check could be looking at a different
-// element than the one actually clicked. So this only uses the screen point to find a rough starting element,
-// then reads that SAME element's own getBoundingClientRect to compute its real screen-space click center —
-// what gets inspected and what gets clicked are then guaranteed to be the same element. Assumes Chrome's chrome
-// (toolbar/tabs) sits only above the viewport and there's no side border worth the name — true for a normal,
-// non-maximized-oddly window; not verified on this user's actual display setup.
-function inspectAtPoint(tab, x, y) {
-  const js = `(function(){
-    var chromeW = window.outerWidth - window.innerWidth;
-    var chromeH = window.outerHeight - window.innerHeight;
-    var vx = (${x}) - window.screenX - chromeW;
-    var vy = (${y}) - window.screenY - chromeH;
-    var el = document.elementFromPoint(vx, vy);
-    if (!el) return "null";
-    var form = el.closest ? el.closest("form") : null;
-    var a = el.closest ? el.closest("a") : null;
-    var btn = el.closest ? el.closest('button, [role="button"], input[type="submit"], input[type="button"]') : null;
-    var r = el.getBoundingClientRect();
-    var info = {
-      tag: el.tagName ? el.tagName.toLowerCase() : "",
-      type: (el.getAttribute && el.getAttribute("type")) || "",
-      autocomplete: (el.getAttribute && el.getAttribute("autocomplete")) || "",
-      text: String((el.innerText || el.value || (el.getAttribute && el.getAttribute("aria-label")) || el.title || "")).slice(0, 100),
-      href: a ? String(a.href || "") : "",
-      formAction: form ? String(form.getAttribute("action") || "") : "",
-      buttonText: btn ? String((btn.innerText || btn.value || (btn.getAttribute && btn.getAttribute("aria-label")) || "")).slice(0, 100) : "",
-      click_x: Math.round(window.screenX + chromeW + r.left + r.width / 2),
-      click_y: Math.round(window.screenY + chromeH + r.top + r.height / 2),
-      in_window: r.width > 0 && r.height > 0,
-    };
-    return JSON.stringify(info);
-  })()`;
-  const raw = execJs(tab, js);
-  try { return JSON.parse(raw); } catch (e) { return null; }
-}
-// Point BOON's vision model picked out on a screenshot, read back from the live page itself (not guessed from
-// the picture) so browser_click/browser_type can refuse a submit/pay/send/sign-in-shaped target before it's
-// clicked — see index.html's lookRisky(). Read-only: looking only ever inspects, never acts. The element's own
-// click_x/click_y (not the original x/y) is what should actually be clicked — see inspectAtPoint above.
-function browserInspectPoint(req) {
-  const win = findBrowserWindow(req.window_id);
-  const tab = activeTab(win);
-  const x = Number(req.x), y = Number(req.y);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("missing x/y");
-  const element = inspectAtPoint(tab, x, y);
-  return { window_id: Number(req.window_id), x, y, element };
-}
-
-// Both click_at and type_at re-inspect and re-check risk themselves, right before acting, rather than trusting
-// that index.html's own check (against a possibly different point — see inspectAtPoint) already covered it.
-// This is the actual last line able to refuse before a real OS-level click/keystroke fires.
-function browserClickAt(req) {
-  const win = findBrowserWindow(req.window_id);
-  const x = Math.round(Number(req.x)), y = Math.round(Number(req.y));
-  if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("missing x/y");
-  if (!withinWindow(win, x, y)) throw new Error("refused: that point is outside the browser window");
-  const tab = activeTab(win);
-  const risk = riskyElement(inspectAtPoint(tab, x, y));
-  if (risk) throw new Error(`refused: that looks like ${risk} — BOON won't click submit/pay/buy/send/sign-in/log-in/delete-shaped targets`);
-  Application("Google Chrome").activate();
-  win.index = 1;
-  const app = stdApp();
-  app.delay(0.15);
-  try { systemEvents().click({ at: [x, y] }); }
-  catch (e) {
-    throw new Error(`couldn't click there (${String((e && e.message) || e)}). BOON may need Accessibility permission: ` +
-      `System Settings → Privacy & Security → Accessibility → allow the BOON Focus helper.`);
-  }
-  return { window_id: Number(req.window_id), x, y };
-}
-function browserTypeAt(req) {
-  const win = findBrowserWindow(req.window_id);
-  const x = Math.round(Number(req.x)), y = Math.round(Number(req.y));
-  const text = str(req.text, 2000);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("missing x/y");
-  // A \r or \n in the text is Return to a focused field — that would submit a form behind the risk check above,
-  // not through it, so it's refused outright rather than stripped (stripping could silently change what's typed).
-  if (/[\r\n]/.test(text)) throw new Error("refused: that text contains a newline, which would press Return and could submit a form — type the text alone, without a line break");
-  if (!withinWindow(win, x, y)) throw new Error("refused: that point is outside the browser window");
-  const tab = activeTab(win);
-  const risk = riskyElement(inspectAtPoint(tab, x, y));
-  if (risk) throw new Error(`refused: that looks like ${risk} — BOON won't type into it`);
-  Application("Google Chrome").activate();
-  win.index = 1;
-  const app = stdApp();
-  app.delay(0.15);
-  const SE = systemEvents();
-  try {
-    SE.click({ at: [x, y] });
-    app.delay(0.15);
-    SE.keystroke(text);
-  } catch (e) {
-    throw new Error(`couldn't type there (${String((e && e.message) || e)}). BOON may need Accessibility permission: ` +
-      `System Settings → Privacy & Security → Accessibility → allow the BOON Focus helper.`);
-  }
-  return { window_id: Number(req.window_id), x, y, typed: text.length };
+  const driver = "$HOME/Library/Application Support/BOON Focus/run-browser-driver.sh";
+  let out;
+  try { out = app.doShellScript(sh(driver) + " " + sh(JSON.stringify(req)), { alteringLineEndings: false }); }
+  catch (e) { throw new Error(`browser control failed (${String((e && e.message) || e)})`); }
+  let result;
+  try { result = JSON.parse(out); }
+  catch (e) { throw new Error("browser control returned something unreadable"); }
+  if (!result.ok) throw new Error(result.error || "browser control failed");
+  delete result.ok;
+  return result;
 }
 
 function dispatch(req) {
@@ -580,13 +335,7 @@ function dispatch(req) {
   if (req.action === "open_app") return openApp(req);
   if (req.action === "web_search") return webSearch(req);
   if (req.action === "fetch_url") return fetchUrl(req);
-  if (req.action === "browser_open") return browserOpen(req);
-  if (req.action === "browser_navigate") return browserNavigate(req);
-  if (req.action === "browser_read") return browserRead(req);
-  if (req.action === "browser_screenshot") return browserScreenshot(req);
-  if (req.action === "browser_inspect_point") return browserInspectPoint(req);
-  if (req.action === "browser_click_at") return browserClickAt(req);
-  if (req.action === "browser_type_at") return browserTypeAt(req);
+  if (String(req.action || "").indexOf("browser_") === 0) return runBrowserDriver(req);
   throw new Error(`no such action: ${req.action}`);
 }
 
@@ -599,4 +348,4 @@ function run(argv) {
 }
 
 // A Node test can require() this file and call dispatch() with its own stand-in Application(), without osascript.
-if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText, relevant, createReminder, completeReminder, winRect, fitDim, withinWindow, riskyElement };
+if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText, relevant, createReminder, completeReminder };
