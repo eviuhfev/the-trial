@@ -7,35 +7,94 @@
     margin: 0; width: 100%; height: 100%;
     background: transparent;
     overflow: hidden;
-    -webkit-app-region: drag;
     -webkit-user-select: none;
-    cursor: pointer;
   }
   .wrap {
     width: 100%; height: 100%;
     display: flex; align-items: center; justify-content: center;
+    cursor: grab;
   }
-  .mark {
-    width: 46px; height: 46px;
-    border-radius: 11px;
-    transform: rotate(45deg) scale(1);
-    background: linear-gradient(135deg, #7aa7ff, #5b8cf5);
-    box-shadow: 0 0 22px rgba(91, 140, 245, .55), 0 4px 14px rgba(0, 0, 0, .35);
+  .wrap.dragging { cursor: grabbing; }
+  .critter {
+    position: relative;
+    width: 52px; height: 48px;
     transition: transform .12s ease-out;
-    animation: breathe 3.2s ease-in-out infinite;
+    animation: bob 2.6s ease-in-out infinite;
   }
-  body:active .mark { transform: rotate(45deg) scale(.82); transition: transform .08s ease-out; }
-  @keyframes breathe {
-    0%, 100% { transform: rotate(45deg) scale(1); }
-    50% { transform: rotate(45deg) scale(1.08); }
+  .wrap:active .critter, .wrap.dragging .critter {
+    transform: scale(.88);
+    transition: transform .08s ease-out;
+    animation-play-state: paused;
+  }
+  .critter .body {
+    position: absolute; inset: 0;
+    border-radius: 46% 46% 50% 50% / 58% 58% 42% 42%;
+    background: linear-gradient(135deg, #7aa7ff, #5b8cf5);
+    box-shadow: 0 0 20px rgba(91, 140, 245, .55), 0 4px 12px rgba(0, 0, 0, .35);
+  }
+  .critter .ear {
+    position: absolute; top: -7px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: linear-gradient(135deg, #7aa7ff, #5b8cf5);
+    box-shadow: 0 0 10px rgba(91, 140, 245, .45);
+  }
+  .critter .ear.left { left: 2px; }
+  .critter .ear.right { right: 2px; }
+  .critter .eyes {
+    position: absolute; top: 16px; left: 0; right: 0;
+    display: flex; justify-content: center; gap: 10px;
+  }
+  .critter .eye {
+    position: relative;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #fff;
+    animation: blink 4.5s ease-in-out infinite;
+  }
+  .critter .eye::after {
+    content: ""; position: absolute;
+    width: 4px; height: 4px; border-radius: 50%;
+    background: #1a2140; top: 2.5px; left: 2.5px;
+  }
+  @keyframes bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+  }
+  @keyframes blink {
+    0%, 92%, 100% { transform: scaleY(1); }
+    96% { transform: scaleY(.1); }
   }
 </style>
 </head>
 <body>
-  <div class="wrap"><div class="mark"></div></div>
+  <div class="wrap" id="wrap">
+    <div class="critter">
+      <div class="ear left"></div>
+      <div class="ear right"></div>
+      <div class="body"></div>
+      <div class="eyes"><div class="eye"></div><div class="eye"></div></div>
+    </div>
+  </div>
   <script>
-    document.body.addEventListener("click", () => window.boonIcon.clicked());
-    document.body.addEventListener("contextmenu", (e) => {
+    const wrap = document.getElementById("wrap");
+    let dragging = false, moved = false, startScreenX = 0, startScreenY = 0;
+    wrap.addEventListener("mousedown", (e) => {
+      dragging = true; moved = false;
+      startScreenX = e.screenX; startScreenY = e.screenY;
+      wrap.classList.add("dragging");
+      window.boonIcon.dragStart();
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      const dx = e.screenX - startScreenX, dy = e.screenY - startScreenY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+      if (moved) window.boonIcon.dragMove(dx, dy);
+    });
+    window.addEventListener("mouseup", () => {
+      wrap.classList.remove("dragging");
+      if (dragging && !moved) window.boonIcon.clicked();
+      dragging = false;
+    });
+    wrap.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       window.boonIcon.rightClicked();
     });

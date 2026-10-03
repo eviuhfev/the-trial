@@ -1,7 +1,7 @@
 // BOON's floating desktop icon: a small always-on-top widget, separate from the browser tab, that sits on screen
 // and opens BOON (starting its local server if needed) when clicked. See install.sh for how it's kept running
 // across restarts.
-const { app, BrowserWindow, ipcMain, Menu, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, Menu, screen, globalShortcut } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -105,8 +105,23 @@ ipcMain.on("boon-icon-right-clicked", () => {
   menu.popup({ window: iconWindow });
 });
 
+// Manual drag instead of -webkit-app-region: drag — more reliable on a small frameless/transparent window, and
+// it doubles as clean click-vs-drag detection (a real click never reaches here, only a move past the threshold
+// in icon.html does).
+let dragOrigin = null;
+ipcMain.on("boon-icon-drag-start", () => { dragOrigin = iconWindow.getPosition(); });
+ipcMain.on("boon-icon-drag-move", (event, dx, dy) => {
+  if (!dragOrigin) return;
+  iconWindow.setPosition(Math.round(dragOrigin[0] + dx), Math.round(dragOrigin[1] + dy));
+});
+
 app.whenReady().then(() => {
   if (app.dock) app.dock.hide();
   createIconWindow();
+  globalShortcut.register("Command+Option+B", () => {
+    if (iconWindow.isVisible()) iconWindow.hide();
+    else iconWindow.show();
+  });
 });
+app.on("will-quit", () => globalShortcut.unregisterAll());
 app.on("window-all-closed", () => {});
