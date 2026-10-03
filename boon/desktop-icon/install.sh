@@ -43,7 +43,11 @@ if [ ! -d node_modules/electron ]; then
   npm install
 fi
 electron_bin="$app/node_modules/.bin/electron"
-[ -x "$electron_bin" ] || { echo "Electron didn't install correctly." >&2; exit 1; }
+# npm can skip electron's postinstall (its "download the real binary" step) depending on script-safety settings,
+# leaving just a stub that would otherwise try to download it lazily on first launch — unattended, under launchd,
+# where a failure has nowhere to show up. Force that now, while we're still interactive and can see it fail.
+echo "Checking Electron is fully downloaded..."
+"$electron_bin" --version >/dev/null || { echo "Electron didn't install correctly." >&2; exit 1; }
 
 stop_if_loaded
 cat >"$plist.new" <<EOF
