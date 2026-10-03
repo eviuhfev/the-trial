@@ -1,7 +1,9 @@
 // Run via `osascript -l JavaScript open-boon.js`. Finds an existing Chrome tab already on BOON and focuses it,
 // instead of piling up a new tab every time the floating icon is clicked; opens one only if none exists.
 function run() {
-  const url = "http://127.0.0.1:6999/";
+  // Must match the exact origin BOON's data already lives under (localhost, not 127.0.0.1 — browsers treat
+  // those as different origins with separate localStorage, even though they're the same server).
+  const url = "http://localhost:6999/";
   const Chrome = Application("Google Chrome");
   if (Chrome.running()) {
     const windows = Chrome.windows();

@@ -1,11 +1,14 @@
 #!/bin/bash
-# Sets up BOON's floating desktop icon on this Mac: installs its dependencies (first run only — downloads
-# Electron, ~150 MB), then registers it as a per-user LaunchAgent so it starts at login and stays running across
-# restarts, and starts it right now so there's no need to log out and back in to see it.
-#   ./install.sh               set it up (or re-apply after a code change: stop, re-register, start)
-#   ./install.sh --uninstall   stop it and remove the LaunchAgent (the files themselves are untouched)
+# Sets up BOON's floating desktop icon on this Mac. Like boon/focus-helper, this doesn't run in place from the
+# Desktop checkout — macOS guards Desktop/Documents from processes launchd starts — so it copies itself to
+# ~/Library/Application Support/BOON Icon and runs from there, pointed back at this checkout's boon/ folder so it
+# always serves the current code. Re-run after any change to this folder to refresh the copy.
+#   ./install.sh               set it up (or re-apply after a code change: copy, re-register, start)
+#   ./install.sh --uninstall   stop it, remove the LaunchAgent and the copied app
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd -P)"
+boon_dir="$(cd "$here/.." && pwd -P)"
+app="$HOME/Library/Application Support/BOON Icon"
 label="com.boon.icon"
 plist="$HOME/Library/LaunchAgents/$label.plist"
 log="$HOME/Library/Logs/boon-icon.log"
@@ -17,6 +20,7 @@ stop_if_loaded() {
 if [ "${1:-}" = "--uninstall" ]; then
   stop_if_loaded
   rm -f "$plist"
+  rm -rf "$app"
   echo "BOON desktop icon removed."
   exit 0
 fi
@@ -26,12 +30,19 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-cd "$here"
+mkdir -p "$app"
+for f in main.js preload.js icon.html open-boon.js package.json package-lock.json; do
+  cp "$here/$f" "$app/.$f.new"
+  mv -f "$app/.$f.new" "$app/$f"
+done
+printf '%s' "$boon_dir" >"$app/boon-dir.txt"
+
+cd "$app"
 if [ ! -d node_modules/electron ]; then
   echo "Installing dependencies (downloads Electron, ~150 MB — one time only)..."
   npm install
 fi
-electron_bin="$here/node_modules/.bin/electron"
+electron_bin="$app/node_modules/.bin/electron"
 [ -x "$electron_bin" ] || { echo "Electron didn't install correctly." >&2; exit 1; }
 
 stop_if_loaded
@@ -44,7 +55,7 @@ cat >"$plist.new" <<EOF
   <key>ProgramArguments</key>
   <array>
     <string>$electron_bin</string>
-    <string>$here</string>
+    <string>$app</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><false/>

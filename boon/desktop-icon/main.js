@@ -7,11 +7,27 @@ const fs = require("fs");
 const http = require("http");
 const { spawn, execFile } = require("child_process");
 
-const BOON_URL = "http://127.0.0.1:6999/";
-const REPO_ROOT = path.join(__dirname, "..", "..");
-const BOON_DIR = path.join(__dirname, "..");
+// A raw TCP/HTTP health check, not a browser navigation, so 127.0.0.1 (the server's actual bind address) is fine
+// here even though every browser-facing URL below must be "localhost" to match BOON's existing data origin.
+const HEALTHCHECK_URL = "http://127.0.0.1:6999/";
+const BOON_URL = "http://localhost:6999/";
 const POSITION_FILE = path.join(app.getPath("userData"), "position.json");
 const ICON_SIZE = 84;
+
+// install.sh copies this app out of the Desktop-situated git checkout into ~/Library/Application Support (macOS
+// guards Desktop/Documents from processes launchd starts, same reason boon/focus-helper isn't run in place
+// either), and drops a boon-dir.txt next to the copy pointing back at the live boon/ folder to serve — so the
+// server always serves the current, just-pulled code, never a stale copy. Falls back to running in place
+// (boon/desktop-icon/main.js) when there's no such config, e.g. testing straight from the repo.
+function resolveBoonDir() {
+  try {
+    const configured = fs.readFileSync(path.join(__dirname, "boon-dir.txt"), "utf8").trim();
+    if (configured) return configured;
+  } catch (e) {}
+  return path.join(__dirname, "..");
+}
+const BOON_DIR = resolveBoonDir();
+const REPO_ROOT = path.join(BOON_DIR, "..");
 
 function loadPosition() {
   try {
@@ -30,7 +46,7 @@ function savePosition(win) {
 
 function boonIsUp() {
   return new Promise((resolve) => {
-    const req = http.get(BOON_URL, (res) => { res.resume(); resolve(true); });
+    const req = http.get(HEALTHCHECK_URL, (res) => { res.resume(); resolve(true); });
     req.on("error", () => resolve(false));
     req.setTimeout(800, () => { req.destroy(); resolve(false); });
   });
@@ -43,7 +59,13 @@ function startBoonServer() {
 }
 function focusOrOpenBoonTab() {
   execFile("osascript", ["-l", "JavaScript", path.join(__dirname, "open-boon.js")], (err, stdout, stderr) => {
-    if (err) console.error("open-boon.js failed:", err.message, stderr);
+    if (err) {
+      // Most likely cause: jaeyoung hasn't (or hasn't yet) allowed this app to control Google Chrome. Falls back
+      // to a plain launch — it can't focus an existing BOON tab without that permission, but it still gets BOON
+      // open rather than doing nothing.
+      console.error("open-boon.js failed, falling back to a plain open:", err.message, stderr);
+      execFile("open", ["-a", "Google Chrome", BOON_URL], () => {});
+    }
   });
 }
 async function openBoon() {
