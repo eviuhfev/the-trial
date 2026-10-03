@@ -213,11 +213,34 @@ function wikipediaSearch(q) {
     snippet: decodeEntities(String(h.snippet || "")).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim(),
   }));
 }
+// Bing's RSS feed, hit without a real browser's cookies/session, turned out (confirmed live, not guessed) to rank
+// mostly on the query's first word — "next SAT test date" came back "Next fashion", "Next.js"; "Seoul Foreign
+// School" came back only "seoul.go.kr". This requires at least half the query's real words (4+ letters, so
+// "the"/"and" don't count) to show up, matched by token prefix rather than a raw substring so a short word can't
+// false-positive inside an unrelated longer one ("test" is NOT inside "latest" here, since "latest" doesn't
+// start with "test" — a plain .includes() would have wrongly counted it).
+function relevant(q, result) {
+  const words = q.toLowerCase().split(/\W+/).filter((w) => w.length >= 4);
+  if (!words.length) return true;
+  const textWords = (result.title + " " + result.snippet).toLowerCase().split(/\W+/).filter(Boolean);
+  const hits = words.filter((w) => textWords.some((t) => t.startsWith(w) || w.startsWith(t))).length;
+  return hits >= Math.ceil(words.length / 2);
+}
 function webSearch(req) {
   const q = str(req.query, 300);
-  let results = [];
-  try { results = bingSearch(q); } catch (e) {}
-  if (!results.length) { try { results = wikipediaSearch(q); } catch (e) {} }
+  let bing = [];
+  try { bing = bingSearch(q).filter((r) => relevant(q, r)); } catch (e) {}
+  let wiki = [];
+  try { wiki = wikipediaSearch(q); } catch (e) {}
+  const seen = new Set();
+  const results = [];
+  for (const r of [...wiki, ...bing]) {
+    const key = r.url.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push(r);
+    if (results.length >= 5) break;
+  }
   if (!results.length) throw new Error("no results for that search");
   return { query: q, results };
 }
@@ -293,4 +316,4 @@ function run(argv) {
 }
 
 // A Node test can require() this file and call dispatch() with its own stand-in Application(), without osascript.
-if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText, createReminder, completeReminder };
+if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText, relevant, createReminder, completeReminder };
