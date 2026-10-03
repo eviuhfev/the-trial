@@ -2720,7 +2720,6 @@ dialog input:focus { border-color: #4a4f8a; }
         }, required: ["text"] },
       },
       show: (a) => [a.in_minutes ? `in ${a.in_minutes} min` : [a.date, a.time].filter(Boolean).join(" "), a.text].filter(Boolean).join(" · "),
-      ask: (a) => { const at = reminderTime(macArgs(a)); return { q: `Add "${String(a.text || "").trim() || "Reminder"}" to the Mac Reminders app, ${fmtWhen(at)}?` }; },
       run: async (a) => {
         const text = String(a.text || "").trim().slice(0, 200) || "Reminder";
         const at = reminderTime(macArgs(a));
@@ -2739,7 +2738,6 @@ dialog input:focus { border-color: #4a4f8a; }
         }, required: ["text"] },
       },
       show: (a) => a.text || "",
-      ask: (a) => ({ q: `Mark the Mac reminder matching "${String(a.text || "").trim()}" as done?` }),
       run: async (a) => {
         const text = String(a.text || "").trim().slice(0, 200);
         if (!text) throw new Error("Say which reminder.");
@@ -2761,7 +2759,6 @@ dialog input:focus { border-color: #4a4f8a; }
         }, required: ["text"] },
       },
       show: (a) => [[a.date, a.time].filter(Boolean).join(" "), a.text].filter(Boolean).join(" · "),
-      ask: (a) => { const at = reminderTime(macArgs(a)); return { q: `Add "${String(a.text || "").trim() || "Event"}" to the Mac Calendar, ${fmtWhen(at)}?` }; },
       run: async (a) => {
         const text = String(a.text || "").trim().slice(0, 200) || "Event";
         const at = reminderTime(macArgs(a));
@@ -2778,11 +2775,6 @@ dialog input:focus { border-color: #4a4f8a; }
         parameters: { type: "object", properties: { app: { type: "string", enum: MAC_APPS } }, required: ["app"] },
       },
       show: (a) => a.app || "",
-      ask: (a) => {
-        const app = MAC_APPS.find((x) => x.toLowerCase() === String(a.app || "").trim().toLowerCase());
-        if (!app) throw new Error(`BOON can only open: ${MAC_APPS.join(", ")}`);
-        return { q: `Open ${app} on the user's Mac?` };
-      },
       run: async (a) => {
         const app = MAC_APPS.find((x) => x.toLowerCase() === String(a.app || "").trim().toLowerCase());
         if (!app) throw new Error(`BOON can only open: ${MAC_APPS.join(", ")}`);
