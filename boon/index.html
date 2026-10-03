@@ -2901,14 +2901,15 @@ dialog input:focus { border-color: #4a4f8a; }
       const prompt = `Screenshot of a web browser window, ${shot.image_w}x${shot.image_h} pixels. Find this on the page: "${target}". ` +
         `Reply with ONLY its bounding box as four numbers "x1,y1,x2,y2" in this image's own pixels, nothing else. If it isn't visible, reply exactly "not found".`;
       const reply = await callVisionModel(shot.image, prompt);
-      if (/not found/i.test(reply)) throw new Error(`Couldn't find "${target}" on the page.`);
-      // Asked for a box, but parsed loosely either way (a plain "x,y" center still works) — a vision model
-      // doesn't always follow the exact format asked for, and this is cheap to tolerate.
+      // Checking for the words "not found" before parsing numbers was the bug (confirmed live): the model
+      // sometimes echoes that phrase from the prompt even when it DID find the target and gave a good box,
+      // so a literal check failed every one of those. Numbers first; only "not found" when there aren't
+      // enough of them to make a point from — that covers a genuine not-found reply too, since it has none.
       const nums = (reply.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
       let x, y;
       if (nums.length >= 4) { x = Math.round((nums[0] + nums[2]) / 2); y = Math.round((nums[1] + nums[3]) / 2); }
       else if (nums.length >= 2) { x = Math.round(nums[0]); y = Math.round(nums[1]); }
-      else throw new Error(`Couldn't tell where "${target}" is on the page.`);
+      else throw new Error(`Couldn't find "${target}" on the page.`);
       const look = await macAction("browser_inspect_point", { window_id: windowId, x, y });
       if (!look.element || !look.element.in_window) throw new Error(`Couldn't find "${target}" precisely enough to act on.`);
       return { x: look.element.click_x, y: look.element.click_y, element: look.element };
