@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body {
+    margin: 0; width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    -webkit-user-select: none;
+  }
+  .wrap {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    cursor: grab;
+  }
+  .wrap.dragging { cursor: grabbing; }
+  .critter {
+    position: relative;
+    width: 52px; height: 48px;
+    transition: transform .12s ease-out;
+    animation: bob 2.6s ease-in-out infinite;
+  }
+  .wrap:active .critter, .wrap.dragging .critter {
+    transform: scale(.88);
+    transition: transform .08s ease-out;
+    animation-play-state: paused;
+  }
+  .critter .body {
+    position: absolute; inset: 0;
+    border-radius: 46% 46% 50% 50% / 58% 58% 42% 42%;
+    background: linear-gradient(135deg, #7aa7ff, #5b8cf5);
+    box-shadow: 0 0 20px rgba(91, 140, 245, .55), 0 4px 12px rgba(0, 0, 0, .35);
+  }
+  .critter .ear {
+    position: absolute; top: -7px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: linear-gradient(135deg, #7aa7ff, #5b8cf5);
+    box-shadow: 0 0 10px rgba(91, 140, 245, .45);
+  }
+  .critter .ear.left { left: 2px; }
+  .critter .ear.right { right: 2px; }
+  .critter .eyes {
+    position: absolute; top: 16px; left: 0; right: 0;
+    display: flex; justify-content: center; gap: 10px;
+  }
+  .critter .eye {
+    position: relative;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #fff;
+    animation: blink 4.5s ease-in-out infinite;
+  }
+  .critter .eye::after {
+    content: ""; position: absolute;
+    width: 4px; height: 4px; border-radius: 50%;
+    background: #1a2140; top: 2.5px; left: 2.5px;
+  }
+  @keyframes bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+  }
+  @keyframes blink {
+    0%, 92%, 100% { transform: scaleY(1); }
+    96% { transform: scaleY(.1); }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap" id="wrap">
+    <div class="critter">
+      <div class="ear left"></div>
+      <div class="ear right"></div>
+      <div class="body"></div>
+      <div class="eyes"><div class="eye"></div><div class="eye"></div></div>
+    </div>
+  </div>
+  <script>
+    // Only tracks button state for the squish/grabbing-cursor feedback here — main.js owns the actual drag
+    // tracking and the click-vs-drag decision (see its comment for why: this window is too small to trust
+    // mousemove/mouseup to keep arriving once the cursor outruns it).
+    const wrap = document.getElementById("wrap");
+    let pressed = false;
+    function release() {
+      if (!pressed) return;
+      pressed = false;
+      wrap.classList.remove("dragging");
+      window.boonIcon.mouseUp();
+    }
+    wrap.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      pressed = true;
+      wrap.classList.add("dragging");
+      window.boonIcon.mouseDown();
+    });
+    window.addEventListener("mouseup", (e) => { if (e.button === 0) release(); });
+    // Self-heal: if the button was released while the cursor was elsewhere, the next time it passes back over
+    // this window without the button held, catch up rather than staying stuck in the "pressed" visual state.
+    window.addEventListener("mousemove", (e) => { if (e.buttons === 0) release(); });
+    wrap.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      window.boonIcon.rightClicked();
+    });
+  </script>
+</body>
+</html>
