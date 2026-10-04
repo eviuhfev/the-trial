@@ -411,8 +411,11 @@ function openLink(req) {
 // play/pause/nextTrack/previousTrack are standard Music.app (ex-iTunes) scripting commands, same shape as every
 // other app command used in this file. For play_query, a playlist name match wins over a track/artist/album
 // match — "play my workout playlist" should play the playlist, not search for a track named "workout".
+// req.command, not req.action: the dispatcher's own routing key is "action" (set to "music_control"), and
+// background.js spreads a tool's own args over the message after it — an args object with its own "action"
+// field would silently clobber the routing key instead of reaching here (found live, 2026-10-04).
 function musicControl(req) {
-  const action = str(req.action, 20);
+  const action = str(req.command, 20);
   const Music = Application("Music");
   if (action === "play") { Music.play(); return { action }; }
   if (action === "pause") { Music.pause(); return { action }; }
@@ -453,6 +456,97 @@ function findNote(req) {
   return { found: true, title: n.name(), body: String(n.plaintext()).trim().slice(0, 2000), count: hits.length };
 }
 
+// ----- file access, scoped to ~/BOON (Day 8) -----
+const BOON_FILE_MAX = 200000; // chars per file — plenty for notes/text, not a general-purpose dumping ground
+
+// Rejects anything that isn't a plain relative path: no leading '/' or '~' (absolute/home-relative), no literal
+// '..' path segment (checked by exact segment match, so a real filename like "notes...txt" is still fine — only
+// the traversal token itself is blocked). This is the primary defense; boonPath() below adds a second, physical
+// check for a symlink placed inside ~/BOON that points back out.
+function safeRelPath(p) {
+  const s = str(p, 200);
+  if (s.indexOf("\0") !== -1) throw new Error("invalid file name");
+  if (s[0] === "/" || s[0] === "~") throw new Error("give a plain file name, not an absolute path");
+  const cleaned = [];
+  for (const seg of s.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") throw new Error("the path can't go outside the BOON folder");
+    if (seg.length > 100) throw new Error("that file name is too long");
+    cleaned.push(seg);
+  }
+  if (!cleaned.length) throw new Error("give a file name");
+  return cleaned.join("/");
+}
+
+// Resolves a request path to a real, verified-inside-~/BOON absolute path. safeRelPath() alone only proves the
+// *string* never asks to leave the folder; this additionally resolves the parent directory's real, symlink-free
+// location (mkdir -p then `pwd -P` after cd-ing into it) and re-checks THAT is still inside root, so a symlink
+// something else left inside ~/BOON pointing elsewhere can't be used to escape it either.
+function boonPath(relPath) {
+  const rel = safeRelPath(relPath);
+  const app = Application.currentApplication();
+  app.includeStandardAdditions = true;
+  const home = app.doShellScript('printf %s "$HOME"');
+  const root = home + "/BOON";
+  const full = root + "/" + rel;
+  const parent = full.slice(0, full.lastIndexOf("/"));
+  const name = full.slice(full.lastIndexOf("/") + 1);
+  app.doShellScript("mkdir -p " + sh(parent));
+  const realParent = app.doShellScript("cd " + sh(parent) + " && pwd -P");
+  if (realParent !== root && realParent.indexOf(root + "/") !== 0) throw new Error("that path isn't inside the BOON folder");
+  return { full: realParent + "/" + name, name, app };
+}
+
+// test -L (is a symlink) on the final path component itself — boonPath() already verified the parent, but the
+// leaf name could itself be a symlink something else dropped in (BOON's own writes never create one).
+function refuseSymlink(app, full) {
+  if (app.doShellScript("test -L " + sh(full) + " && echo yes || echo no") === "yes") throw new Error("that name points outside the BOON folder");
+}
+
+function writeBoonFile(req) {
+  const { full, name, app } = boonPath(req.path);
+  refuseSymlink(app, full);
+  const content = req.content != null ? String(req.content).slice(0, BOON_FILE_MAX) : "";
+  app.doShellScript("printf %s " + sh(content) + " > " + sh(full));
+  return { name };
+}
+
+function readBoonFile(req) {
+  const { full, name, app } = boonPath(req.path);
+  if (app.doShellScript("test -e " + sh(full) + " && echo yes || echo no") !== "yes") throw new Error(`no file named "${name}" in the BOON folder`);
+  refuseSymlink(app, full);
+  const content = app.doShellScript("cat " + sh(full), { alteringLineEndings: false });
+  return { name, content: content.slice(0, BOON_FILE_MAX) };
+}
+
+function listBoonFiles() {
+  const app = Application.currentApplication();
+  app.includeStandardAdditions = true;
+  const home = app.doShellScript('printf %s "$HOME"');
+  const root = home + "/BOON";
+  app.doShellScript("mkdir -p " + sh(root));
+  const out = app.doShellScript("cd " + sh(root) + " && find . -maxdepth 3 -type f -not -path '*/.*' | sed 's|^\\./||' | sort");
+  return { files: out.split("\n").map((l) => l.trim()).filter(Boolean) };
+}
+
+function deleteBoonFile(req) {
+  const { full, name, app } = boonPath(req.path);
+  if (app.doShellScript("test -e " + sh(full) + " && echo yes || echo no") !== "yes") throw new Error(`no file named "${name}" in the BOON folder`);
+  refuseSymlink(app, full);
+  app.doShellScript("rm -f -- " + sh(full));
+  return { name };
+}
+
+// req.command, not req.action — same routing-key collision as musicControl above.
+function boonFile(req) {
+  const action = str(req.command, 20);
+  if (action === "write") return writeBoonFile(req);
+  if (action === "read") return readBoonFile(req);
+  if (action === "list") return listBoonFiles();
+  if (action === "delete") return deleteBoonFile(req);
+  throw new Error(`unknown file action: ${action}`);
+}
+
 // ----- browser control (Day 6-7) -----
 // A browser window BOON's robot drives on its own, separate from whatever tab the user is reading — entirely
 // through browser-driver.js (a small Node/Playwright script install.sh copies alongside this file). It drives
@@ -488,6 +582,7 @@ function dispatch(req) {
   if (req.action === "music_control") return musicControl(req);
   if (req.action === "create_note") return createNote(req);
   if (req.action === "find_note") return findNote(req);
+  if (req.action === "boon_file") return boonFile(req);
   if (req.action === "web_search") return webSearch(req);
   if (req.action === "fetch_url") return fetchUrl(req);
   if (String(req.action || "").indexOf("browser_") === 0) return runBrowserDriver(req);

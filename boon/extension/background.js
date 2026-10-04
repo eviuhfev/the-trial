@@ -462,7 +462,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       return { ok: true, start: s.start, end: s.end, minEnd: s.minEnd, mode };
     }
     if (type === "create_reminder" || type === "complete_reminder" || type === "create_event" || type === "open_app" || type === "open_link" ||
-        type === "music_control" || type === "create_note" || type === "find_note" || type === "web_search" || type === "fetch_url" ||
+        type === "music_control" || type === "create_note" || type === "find_note" || type === "boon_file" || type === "web_search" || type === "fetch_url" ||
         type === "browser_open" || type === "browser_navigate" || type === "browser_read" || type === "browser_screenshot" ||
         type === "browser_inspect_point" || type === "browser_click_at" || type === "browser_type_at") {
       const { type: _drop, ...args } = msg;

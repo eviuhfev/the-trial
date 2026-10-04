@@ -2820,9 +2820,31 @@ dialog input:focus { border-color: #4a4f8a; }
         const action = String(a.action || "").trim().toLowerCase();
         if (!["play", "pause", "next", "previous", "play_query"].includes(action)) throw new Error("action must be play, pause, next, previous, or play_query.");
         if (action === "play_query" && !String(a.query || "").trim()) throw new Error("Say what to play.");
-        const res = await macAction("music_control", { action, query: a.query ? String(a.query).trim().slice(0, 200) : undefined });
+        const res = await macAction("music_control", { command: action, query: a.query ? String(a.query).trim().slice(0, 200) : undefined });
         if (action === "play_query") return res.played ? `Now playing "${res.played}" in Music.` : `Couldn't find anything matching "${a.query}" in Music.`;
         return `Music: ${action === "next" || action === "previous" ? "skipped" : action === "pause" ? "paused" : "playing"}.`;
+      },
+    };
+    TOOLS.boon_file = {
+      label: "BOON folder file",
+      spec: {
+        description: "Write, read, list, or delete a file in a dedicated ~/BOON folder on the user's Mac — BOON's only file-system access, kept to that one folder. Use for things the user wants saved as an actual file (not a quick note): a list, a draft, something to open later outside BOON.",
+        parameters: { type: "object", properties: {
+          action: { type: "string", enum: ["write", "read", "list", "delete"] },
+          path: { type: "string", description: "File name, optionally with a subfolder (e.g. 'homework/essay.txt'). Not needed for list." },
+          content: { type: "string", description: "For write: the file's full text content." },
+        }, required: ["action"] },
+      },
+      show: (a) => a.action === "list" ? "list" : `${a.action} ${a.path || ""}`,
+      run: async (a) => {
+        const action = String(a.action || "").trim().toLowerCase();
+        if (!["write", "read", "list", "delete"].includes(action)) throw new Error("action must be write, read, list, or delete.");
+        if (action !== "list" && !String(a.path || "").trim()) throw new Error("Say which file.");
+        const res = await macAction("boon_file", { command: action, path: a.path ? String(a.path).trim() : undefined, content: a.content != null ? String(a.content) : undefined });
+        if (action === "write") return `Saved ~/BOON/${res.name}.`;
+        if (action === "read") return `${res.name}:\n\n${res.content}`;
+        if (action === "delete") return `Deleted ~/BOON/${res.name}.`;
+        return res.files.length ? `Files in ~/BOON:\n${res.files.join("\n")}` : "The BOON folder is empty.";
       },
     };
     // Replaces, not just adds to, the reminder instruction: naming set_reminder there crowded out mac_reminder
@@ -2834,7 +2856,7 @@ dialog input:focus { border-color: #4a4f8a; }
       "Only for important school work (homework, study, tests, essays) where BOON itself should open a link and start " +
       "a focus timer when it rings, call set_reminder instead, with important: true, a link if they named a site or doc, " +
       "and focus_minutes (at least 10) — set_reminder only works while BOON stays open, mac_reminder doesn't need that. ";
-    macAgentPrompt = " For a calendar event, call mac_calendar_event. To open an app on the user's Mac, call open_mac_app. To open a link in their actual browser (not just read it), call open_mac_link. To play, pause, skip, or choose music, call music_control. For a note in the user's real Mac Notes app, call mac_note or find_mac_note — not save_note/find_notes, which are BOON's own separate list.";
+    macAgentPrompt = " For a calendar event, call mac_calendar_event. To open an app on the user's Mac, call open_mac_app. To open a link in their actual browser (not just read it), call open_mac_link. To play, pause, skip, or choose music, call music_control. For a note in the user's real Mac Notes app, call mac_note or find_mac_note — not save_note/find_notes, which are BOON's own separate list. To save, read, list, or delete an actual file, call boon_file — it only ever touches one dedicated ~/BOON folder, nowhere else on their Mac.";
     TOOLS.set_reminder.spec.description = "Only for IMPORTANT school work needing a focus timer when it rings (see important/focus_minutes) " +
       "— for every other reminder use mac_reminder instead. " + TOOLS.set_reminder.spec.description;
 
