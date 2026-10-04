@@ -503,23 +503,32 @@ function assertNoSymlinkAncestors(app, root, rel) {
 
 // Resolves a request path to a real, verified-inside-root absolute path. safeRelPath() alone only proves the
 // *string* never asks to leave the folder; this additionally checks every existing ancestor isn't a symlink
-// BEFORE creating anything (assertNoSymlinkAncestors, above), then re-resolves the final parent's real,
-// symlink-free location as a second, belt-and-suspenders check (mkdir -p then `pwd -P` after cd-ing into it).
+// BEFORE creating anything (assertNoSymlinkAncestors, above). create=true (write) also makes the directories
+// along the way; create=false (read/delete) never creates anything — if the parent doesn't exist yet, the file
+// can't either, so the caller's own test -e on the returned path reports "not found" without this creating an
+// empty directory just from a failed read/delete attempt (found live: reading a never-written path was leaving
+// behind an empty subfolder tree). Either way, once the parent is known to exist, its real, symlink-free location
+// is re-resolved as a second, belt-and-suspenders check — via printf %s "$(pwd -P)" rather than plain `pwd -P`,
+// so the shell emits no trailing newline at all: passing {alteringLineEndings:false} here once caused doShellScript
+// to stop silently stripping that trailing newline too (not just stop mangling embedded ones), so realParent came
+// back as "root\n" and never matched root — confirmed live (2026-10-04) and fixed by removing the newline at the
+// source instead of relying on either of doShellScript's two newline behaviors.
 // root is its own dedicated folder (~/BOON/Robot), not the ~/BOON the user already keeps their own files in —
 // see the project memory note on why, dated 2026-10-04.
-function boonPath(relPath) {
+function boonPath(relPath, create) {
   const rel = safeRelPath(relPath);
   const app = Application.currentApplication();
   app.includeStandardAdditions = true;
   const home = app.doShellScript('printf %s "$HOME"');
   const root = home + "/BOON/Robot";
-  app.doShellScript("mkdir -p " + sh(root));
+  if (create) app.doShellScript("mkdir -p " + sh(root));
   assertNoSymlinkAncestors(app, root, rel);
   const full = root + "/" + rel;
   const parent = full.slice(0, full.lastIndexOf("/"));
   const name = full.slice(full.lastIndexOf("/") + 1);
-  app.doShellScript("mkdir -p " + sh(parent));
-  const realParent = app.doShellScript("cd " + sh(parent) + " && pwd -P", { alteringLineEndings: false });
+  if (create) app.doShellScript("mkdir -p " + sh(parent));
+  else if (app.doShellScript("test -d " + sh(parent) + " && echo yes || echo no") !== "yes") return { full, name, app };
+  const realParent = app.doShellScript("cd " + sh(parent) + ' && printf %s "$(pwd -P)"');
   if (realParent !== root && realParent.indexOf(root + "/") !== 0) throw new Error("that path isn't inside the BOON folder");
   return { full: realParent + "/" + name, name, app };
 }
@@ -531,7 +540,7 @@ function refuseSymlink(app, full) {
 }
 
 function writeBoonFile(req) {
-  const { full, name, app } = boonPath(req.path);
+  const { full, name, app } = boonPath(req.path, true);
   refuseSymlink(app, full);
   const content = req.content != null ? String(req.content).slice(0, BOON_FILE_MAX) : "";
   app.doShellScript("printf %s " + sh(content) + " > " + sh(full));
