@@ -2777,11 +2777,11 @@ dialog input:focus { border-color: #4a4f8a; }
     TOOLS.mac_note = {
       label: "Added a Mac note",
       spec: {
-        description: "Create a note in the user's actual Mac Notes app — for save_note instead, use BOON's own separate notes list, which only BOON itself can see.",
+        description: "Create a note in the user's actual Mac Notes app — for save_note instead, use BOON's own separate notes list, which only BOON itself can see. When the user asked you to write, generate, or compose real content (an essay, story, summary, letter…), put the FULL text you composed in body yourself — never leave body empty or just repeat the topic as the title. body can be empty only for a genuine title-only note the user didn't ask you to write anything for.",
         parameters: { type: "object", properties: {
           title: { type: "string", description: "The note's title" },
-          body: { type: "string", description: "Optional note text, after the title" },
-        }, required: ["title"] },
+          body: { type: "string", description: "The note's full text, after the title — the actual composed essay/story/draft/etc. itself when that's what was asked for, not a placeholder. Empty string only for a genuine title-only note." },
+        }, required: ["title", "body"] },
       },
       show: (a) => a.title || "",
       run: async (a) => {
@@ -2828,22 +2828,23 @@ dialog input:focus { border-color: #4a4f8a; }
     TOOLS.boon_file = {
       label: "BOON folder file",
       spec: {
-        description: "Write, read, list, or delete a file in a dedicated ~/BOON/Robot folder on the user's Mac — BOON's only file-system access, kept to that one folder (separate from anything else the user keeps in ~/BOON). Use for things the user wants saved as an actual file (not a quick note): a list, a draft, something to open later outside BOON.",
+        description: "Write, read, list, delete, or open a file in a dedicated ~/BOON/Robot folder on the user's Mac — BOON's only file-system access, kept to that one folder (separate from anything else the user keeps in ~/BOON). Use for things the user wants saved as an actual file (not a quick note): a list, a draft, something to open later outside BOON. open launches it in its real app (TextEdit, Preview, …), same as double-clicking it in Finder. For write, when the user asked you to write/generate/compose real content (an essay, story, summary, letter…), put the FULL text you composed in content yourself — never leave content empty or just repeat the topic as the file name.",
         parameters: { type: "object", properties: {
-          action: { type: "string", enum: ["write", "read", "list", "delete"] },
+          action: { type: "string", enum: ["write", "read", "list", "delete", "open"] },
           path: { type: "string", description: "File name, optionally with a subfolder (e.g. 'homework/essay.txt'). Not needed for list." },
-          content: { type: "string", description: "For write: the file's full text content." },
+          content: { type: "string", description: "For write: the file's full text content — the actual composed essay/story/draft/etc. itself when that's what was asked for, not a placeholder." },
         }, required: ["action"] },
       },
       show: (a) => a.action === "list" ? "list" : `${a.action} ${a.path || ""}`,
       run: async (a) => {
         const action = String(a.action || "").trim().toLowerCase();
-        if (!["write", "read", "list", "delete"].includes(action)) throw new Error("action must be write, read, list, or delete.");
+        if (!["write", "read", "list", "delete", "open"].includes(action)) throw new Error("action must be write, read, list, delete, or open.");
         if (action !== "list" && !String(a.path || "").trim()) throw new Error("Say which file.");
         const res = await macAction("boon_file", { command: action, path: a.path ? String(a.path).trim() : undefined, content: a.content != null ? String(a.content) : undefined });
         if (action === "write") return `Saved ~/BOON/Robot/${res.name}.`;
         if (action === "read") return `${res.name}:\n\n${res.content}`;
         if (action === "delete") return `Deleted ~/BOON/Robot/${res.name}.`;
+        if (action === "open") return `Opened ~/BOON/Robot/${res.name}.`;
         return res.files.length ? `Files in ~/BOON/Robot:\n${res.files.join("\n")}` : "The BOON folder is empty.";
       },
     };
@@ -2856,7 +2857,7 @@ dialog input:focus { border-color: #4a4f8a; }
       "Only for important school work (homework, study, tests, essays) where BOON itself should open a link and start " +
       "a focus timer when it rings, call set_reminder instead, with important: true, a link if they named a site or doc, " +
       "and focus_minutes (at least 10) — set_reminder only works while BOON stays open, mac_reminder doesn't need that. ";
-    macAgentPrompt = " For a calendar event, call mac_calendar_event. To open an app on the user's Mac, call open_mac_app. To open a link in their actual browser (not just read it), call open_mac_link. To play, pause, skip, or choose music, call music_control. For a note in the user's real Mac Notes app, call mac_note or find_mac_note — not save_note/find_notes, which are BOON's own separate list. To save, read, list, or delete an actual file, call boon_file — it only ever touches one dedicated ~/BOON/Robot folder, nowhere else on their Mac.";
+    macAgentPrompt = " For a calendar event, call mac_calendar_event. To open an app on the user's Mac, call open_mac_app. To open a link in their actual browser (not just read it), call open_mac_link. To play, pause, skip, or choose music, call music_control. For a note in the user's real Mac Notes app, call mac_note or find_mac_note — not save_note/find_notes, which are BOON's own separate list. To save, read, list, delete, or open an actual file, call boon_file — it only ever touches one dedicated ~/BOON/Robot folder, nowhere else on their Mac. Whenever the task is to write, generate, or compose something (an essay, story, summary, letter…) and save or note it, you must write the full text yourself and put it in boon_file's content or mac_note's body — a title or file name alone is never enough.";
     TOOLS.set_reminder.spec.description = "Only for IMPORTANT school work needing a focus timer when it rings (see important/focus_minutes) " +
       "— for every other reminder use mac_reminder instead. " + TOOLS.set_reminder.spec.description;
 
@@ -3514,6 +3515,15 @@ dialog input:focus { border-color: #4a4f8a; }
             && !/\b(delete|remove|show|find|read|which|what|did|check off|done with)\b|\blist (me |all )?(my|the|of)\b|^\s*list\b/i.test(text);
           const triedSave = m.steps.some((s) => s.type === "tool" && /^(save_note|append_to_note|add_todo)$/.test(s.name));
           const claimsSaved = /^\s*(saved|added|noted|done)\b|\b((i'?ve|i have|i) (saved|added|noted|jotted)|(saved|added) (it |that |this )?(to|in|as) (a |your |the )?(notes?|to[- ]?dos?|list)|(note|to-?do) (is |has been |was )?(saved|added|created))\b/i;
+          // Asked to WRITE/COMPOSE real prose (an essay, story, summary…), not just file or label it — but the small
+          // local model often treats the whole ask as a title/file name and leaves the actual content empty (an
+          // "optional" field gets skipped rather than written). Catches it by checking what the most recent
+          // save_note/mac_note/boon_file(write) call actually carried, not just whether a tool ran at all.
+          const wantsProse = /\b(write|generate|compose|create|draft)\b[^.!?]{0,40}\b(essay|essays|story|stories|poem|poems|summary|summaries|letter|letters|report|reports|paragraph|paragraphs|article|articles|speech|speeches|script|scripts)\b/i.test(text);
+          const lastContentStep = m.steps.filter((s) => s.type === "tool" && s.status === "done" && /^(save_note|mac_note|boon_file)$/.test(s.name)).slice(-1)[0];
+          const contentField = lastContentStep?.name === "mac_note" ? "body" : lastContentStep?.name === "boon_file" ? "content" : "text";
+          const writtenText = lastContentStep ? String(lastContentStep.args?.[contentField] ?? "").trim() : "";
+          const thinContent = wantsProse && lastContentStep && (lastContentStep.name !== "boon_file" || lastContentStep.args?.action === "write") && writtenText.length < 150;
           const refused = /can(no|[’']|)t|unable|couldn/i.test(content);
           // "That's already saved" after a lookup that found something is true, not a fake claim.
           const looked = (re) => m.steps.some((s) => s.type === "tool" && s.status === "done" && re.test(s.name) &&
@@ -3576,6 +3586,8 @@ dialog input:focus { border-color: #4a4f8a; }
               ? `You haven't set the reminder yet. Call ${hasLock() ? "mac_reminder" : "set_reminder"} now with the exact time including minutes.`
               : wantsSave && !triedSave && !(already && looked(/^(find_notes|list_todos)$/)) && !content.includes("?") && claimsSaved.test(content) && !refused
                 ? "You haven't saved it yet. Call save_note (for a note) or add_todo (for a to-do) now."
+                : thinContent
+                  ? `You only gave "${lastContentStep.name}" a title or file name, not the actual text. Write it out in full yourself now, then call ${lastContentStep.name} again with the complete content in ${contentField}.`
                 : asksRecall && !m.steps.some((s) => s.type === "tool")
                   ? "Before answering, look it up: call find_notes with a few key words (e.g. \"locker code\"), or list_todos or list_reminders if it's about tasks or reminders."
                   : makeNudge;

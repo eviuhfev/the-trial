@@ -576,6 +576,18 @@ function deleteBoonFile(req) {
   return { name };
 }
 
+// Launches the file in its real default app (TextEdit, Preview, …) via macOS's own `open`, same mechanism as
+// openLink — the one thing write/read/list/delete couldn't do: actually open a saved file the way double-clicking
+// it in Finder would, for the user to keep looking at it outside BOON.
+function openBoonFile(req) {
+  const { full, name, app } = boonPath(req.path);
+  if (app.doShellScript("test -e " + sh(full) + " && echo yes || echo no") !== "yes") throw new Error(`no file named "${name}" in the BOON folder`);
+  refuseSymlink(app, full);
+  try { app.doShellScript("open " + sh(full)); }
+  catch (e) { throw new Error(`couldn't open that file (${String((e && e.message) || e)})`); }
+  return { name };
+}
+
 // req.command, not req.action — same routing-key collision as musicControl above.
 function boonFile(req) {
   const action = str(req.command, 20);
@@ -583,6 +595,7 @@ function boonFile(req) {
   if (action === "read") return readBoonFile(req);
   if (action === "list") return listBoonFiles();
   if (action === "delete") return deleteBoonFile(req);
+  if (action === "open") return openBoonFile(req);
   throw new Error(`unknown file action: ${action}`);
 }
 
