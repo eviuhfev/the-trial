@@ -456,13 +456,17 @@ function findNote(req) {
   return { found: true, title: n.name(), body: String(n.plaintext()).trim().slice(0, 2000), count: hits.length };
 }
 
-// ----- file access, scoped to ~/BOON (Day 8) -----
+// ----- file access, scoped to ~/BOON/Robot (Day 8) -----
+// Its own subfolder, not the ~/BOON the user already keeps real files in directly — found live on jaeyoung's
+// own Mac (2026-10-04) that ~/BOON already held pre-existing personal files, which the robot could otherwise
+// read or delete with zero confirmation now that Allow/Deny cards are gone project-wide. A nested, BOON-only
+// folder keeps the robot from ever touching anything it didn't itself create.
 const BOON_FILE_MAX = 200000; // chars per file — plenty for notes/text, not a general-purpose dumping ground
 
 // Rejects anything that isn't a plain relative path: no leading '/' or '~' (absolute/home-relative), no literal
 // '..' path segment (checked by exact segment match, so a real filename like "notes...txt" is still fine — only
 // the traversal token itself is blocked). This is the primary defense; boonPath() below adds a second, physical
-// check for a symlink placed inside ~/BOON that points back out.
+// check for a symlink placed inside the root that points back out.
 function safeRelPath(p) {
   const s = str(p, 200);
   if (s.indexOf("\0") !== -1) throw new Error("invalid file name");
@@ -478,21 +482,44 @@ function safeRelPath(p) {
   return cleaned.join("/");
 }
 
-// Resolves a request path to a real, verified-inside-~/BOON absolute path. safeRelPath() alone only proves the
-// *string* never asks to leave the folder; this additionally resolves the parent directory's real, symlink-free
-// location (mkdir -p then `pwd -P` after cd-ing into it) and re-checks THAT is still inside root, so a symlink
-// something else left inside ~/BOON pointing elsewhere can't be used to escape it either.
+// Checked by walking down from root one segment at a time, BEFORE anything is created: catches a symlink placed
+// at any EXISTING ancestor directory, so the mkdir -p below can't be tricked into creating directories through
+// it and out of the root. Stops as soon as a segment doesn't exist yet ("none") — nothing can exist under a path
+// that doesn't exist, so everything past that point is guaranteed fresh, and mkdir -p can only ever create new
+// (and so symlink-free) directories from there down.
+function assertNoSymlinkAncestors(app, root, rel) {
+  const segs = rel.split("/");
+  segs.pop();
+  let path = root;
+  for (const seg of segs) {
+    path = path + "/" + seg;
+    const status = app.doShellScript(
+      "if [ -L " + sh(path) + " ]; then echo link; elif [ -d " + sh(path) + " ]; then echo dir; elif [ -e " + sh(path) + " ]; then echo other; else echo none; fi"
+    );
+    if (status === "none") break;
+    if (status !== "dir") throw new Error("that path isn't inside the BOON folder");
+  }
+}
+
+// Resolves a request path to a real, verified-inside-root absolute path. safeRelPath() alone only proves the
+// *string* never asks to leave the folder; this additionally checks every existing ancestor isn't a symlink
+// BEFORE creating anything (assertNoSymlinkAncestors, above), then re-resolves the final parent's real,
+// symlink-free location as a second, belt-and-suspenders check (mkdir -p then `pwd -P` after cd-ing into it).
+// root is its own dedicated folder (~/BOON/Robot), not the ~/BOON the user already keeps their own files in —
+// see the project memory note on why, dated 2026-10-04.
 function boonPath(relPath) {
   const rel = safeRelPath(relPath);
   const app = Application.currentApplication();
   app.includeStandardAdditions = true;
   const home = app.doShellScript('printf %s "$HOME"');
-  const root = home + "/BOON";
+  const root = home + "/BOON/Robot";
+  app.doShellScript("mkdir -p " + sh(root));
+  assertNoSymlinkAncestors(app, root, rel);
   const full = root + "/" + rel;
   const parent = full.slice(0, full.lastIndexOf("/"));
   const name = full.slice(full.lastIndexOf("/") + 1);
   app.doShellScript("mkdir -p " + sh(parent));
-  const realParent = app.doShellScript("cd " + sh(parent) + " && pwd -P");
+  const realParent = app.doShellScript("cd " + sh(parent) + " && pwd -P", { alteringLineEndings: false });
   if (realParent !== root && realParent.indexOf(root + "/") !== 0) throw new Error("that path isn't inside the BOON folder");
   return { full: realParent + "/" + name, name, app };
 }
@@ -523,9 +550,12 @@ function listBoonFiles() {
   const app = Application.currentApplication();
   app.includeStandardAdditions = true;
   const home = app.doShellScript('printf %s "$HOME"');
-  const root = home + "/BOON";
+  const root = home + "/BOON/Robot";
   app.doShellScript("mkdir -p " + sh(root));
-  const out = app.doShellScript("cd " + sh(root) + " && find . -maxdepth 3 -type f -not -path '*/.*' | sed 's|^\\./||' | sort");
+  // alteringLineEndings: false matters here specifically because this output is multi-line (one path per file) —
+  // without it every \n between entries becomes \r, so the split("\n") below sees one giant unsplit string
+  // instead of a file list (same doShellScript default behavior noted on curlOnce above).
+  const out = app.doShellScript("cd " + sh(root) + " && find . -maxdepth 3 -type f -not -path '*/.*' | sed 's|^\\./||' | sort", { alteringLineEndings: false });
   return { files: out.split("\n").map((l) => l.trim()).filter(Boolean) };
 }
 
