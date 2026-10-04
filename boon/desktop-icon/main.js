@@ -76,7 +76,7 @@ async function openBoon() {
   focusOrOpenBoonTab();
 }
 
-// Two instances would each register their own Command+Option+B, and whichever lost that registration race
+// Two instances would each register their own Option+Space, and whichever lost that registration race
 // would silently have a dead shortcut (observed live, 2026-10-03, after a manual restart briefly left two
 // running at once) — refuse a second launch outright instead, and just reassert the existing one on screen.
 if (!app.requestSingleInstanceLock()) {
@@ -97,7 +97,7 @@ function clampToDisplay(win) {
 }
 // Re-applies every always-visible flag, not just show() — found live (2026-10-03) that after the Mac slept
 // and woke, the window was still "visible" by Electron's own bookkeeping but not actually on screen, which
-// also made the Command+Option+B toggle below useless (it only ever called the plain hide()/show() pair, so
+// also made the Option+Space toggle below useless (it only ever called the plain hide()/show() pair, so
 // toggling it just flipped between two states that both looked the same: invisible).
 function reassertVisible() {
   if (!iconWindow) return;
@@ -167,11 +167,13 @@ ipcMain.on("boon-icon-mouse-up", () => endDrag());
 app.whenReady().then(() => {
   if (app.dock) app.dock.hide();
   createIconWindow();
-  const bound = globalShortcut.register("Command+Option+B", () => {
+  // Command+Option+B collided with Chrome's own Bookmark Manager shortcut (jaeyoung hit this, 2026-10-04) —
+  // moved to Option+Space, the shortcut the roadmap already named for D12's eventual full app.
+  const bound = globalShortcut.register("Alt+Space", () => {
     if (iconWindow.isVisible()) iconWindow.hide();
     else reassertVisible();
   });
-  if (!bound) console.error("Command+Option+B could not be registered as a global shortcut (already in use).");
+  if (!bound) console.error("Option+Space could not be registered as a global shortcut (already in use).");
   // A sleep/wake cycle (or a display being connected/disconnected) is what was actually observed to leave the
   // window technically "visible" but not really on screen, with no later user action required to trigger it.
   powerMonitor.on("resume", reassertVisible);
