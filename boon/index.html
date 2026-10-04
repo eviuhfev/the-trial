@@ -2774,6 +2774,57 @@ dialog input:focus { border-color: #4a4f8a; }
         return `Opened ${app}.`;
       },
     };
+    TOOLS.mac_note = {
+      label: "Added a Mac note",
+      spec: {
+        description: "Create a note in the user's actual Mac Notes app — for save_note instead, use BOON's own separate notes list, which only BOON itself can see.",
+        parameters: { type: "object", properties: {
+          title: { type: "string", description: "The note's title" },
+          body: { type: "string", description: "Optional note text, after the title" },
+        }, required: ["title"] },
+      },
+      show: (a) => a.title || "",
+      run: async (a) => {
+        const title = String(a.title || "").trim().slice(0, 200);
+        if (!title) throw new Error("Give the note a title.");
+        await macAction("create_note", { title, body: a.body ? String(a.body).trim().slice(0, 5000) : "" });
+        return `Added "${title}" to the Mac Notes app.`;
+      },
+    };
+    TOOLS.find_mac_note = {
+      label: "Searched Mac notes",
+      spec: {
+        description: "Search the user's actual Mac Notes app by title or text — for find_notes instead, use BOON's own separate notes list, which only BOON itself can see.",
+        parameters: { type: "object", properties: { query: { type: "string", description: "Words to search for" } }, required: ["query"] },
+      },
+      show: (a) => a.query || "",
+      run: async (a) => {
+        const query = String(a.query || "").trim().slice(0, 200);
+        if (!query) throw new Error("Say what to search for.");
+        const res = await macAction("find_note", { query });
+        if (!res.found) return `No Mac note matches "${query}".`;
+        return `"${res.title}"${res.count > 1 ? ` (and ${res.count - 1} more match — say more to narrow it down)` : ""}\n\n${res.body}`;
+      },
+    };
+    TOOLS.music_control = {
+      label: "Controlled Music",
+      spec: {
+        description: "Control the Music app on the user's Mac: play, pause, skip, or play a specific song, artist, album, or playlist by name.",
+        parameters: { type: "object", properties: {
+          action: { type: "string", enum: ["play", "pause", "next", "previous", "play_query"], description: "play_query needs 'query' too; the others take no query and resume/control whatever's current" },
+          query: { type: "string", description: "For play_query: a song, artist, album, or playlist name to search for and play" },
+        }, required: ["action"] },
+      },
+      show: (a) => a.action === "play_query" ? `play "${a.query || ""}"` : a.action || "",
+      run: async (a) => {
+        const action = String(a.action || "").trim().toLowerCase();
+        if (!["play", "pause", "next", "previous", "play_query"].includes(action)) throw new Error("action must be play, pause, next, previous, or play_query.");
+        if (action === "play_query" && !String(a.query || "").trim()) throw new Error("Say what to play.");
+        const res = await macAction("music_control", { action, query: a.query ? String(a.query).trim().slice(0, 200) : undefined });
+        if (action === "play_query") return res.played ? `Now playing "${res.played}" in Music.` : `Couldn't find anything matching "${a.query}" in Music.`;
+        return `Music: ${action === "next" || action === "previous" ? "skipped" : action === "pause" ? "paused" : "playing"}.`;
+      },
+    };
     // Replaces, not just adds to, the reminder instruction: naming set_reminder there crowded out mac_reminder
     // even with a separate line telling the model to prefer it (tested against the real model).
     reminderBlock = "To remind the user, call mac_reminder with the exact time including minutes (or in_minutes) " +
@@ -2783,10 +2834,24 @@ dialog input:focus { border-color: #4a4f8a; }
       "Only for important school work (homework, study, tests, essays) where BOON itself should open a link and start " +
       "a focus timer when it rings, call set_reminder instead, with important: true, a link if they named a site or doc, " +
       "and focus_minutes (at least 10) — set_reminder only works while BOON stays open, mac_reminder doesn't need that. ";
-    macAgentPrompt = " For a calendar event, call mac_calendar_event. To open an app on the user's Mac, call open_mac_app.";
+    macAgentPrompt = " For a calendar event, call mac_calendar_event. To open an app on the user's Mac, call open_mac_app. To open a link in their actual browser (not just read it), call open_mac_link. To play, pause, skip, or choose music, call music_control. For a note in the user's real Mac Notes app, call mac_note or find_mac_note — not save_note/find_notes, which are BOON's own separate list.";
     TOOLS.set_reminder.spec.description = "Only for IMPORTANT school work needing a focus timer when it rings (see important/focus_minutes) " +
       "— for every other reminder use mac_reminder instead. " + TOOLS.set_reminder.spec.description;
 
+    TOOLS.open_mac_link = {
+      label: "Opened a link",
+      spec: {
+        description: "Open a web link in the user's actual browser on their Mac (whatever they've set as default) — unlike read_page or browser_open, this is a real window they'll see and can use normally, with their own logins. Use when they ask BOON to open, go to, or pull up a site or page for them, not just read it.",
+        parameters: { type: "object", properties: { url: { type: "string", description: "The page's full http(s) link to open" } }, required: ["url"] },
+      },
+      show: (a) => a.url || "",
+      run: async (a) => {
+        const url = String(a.url || "").trim();
+        if (!/^https?:\/\//i.test(url)) throw new Error("Give a full link starting with http:// or https://.");
+        await macAction("open_link", { url });
+        return `Opened ${url} in the browser.`;
+      },
+    };
     TOOLS.web_search = {
       label: "Searched the web",
       spec: {

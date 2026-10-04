@@ -63,6 +63,9 @@ function decodeEntities(s) {
     return whole;
   });
 }
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
 // Finds `open` (e.g. "<head"), skipping a match that's really a prefix of a longer tag name — "<head" must not
 // match inside "<header". Only checked when open ends in a word character (a tag name): the char right after then
@@ -392,6 +395,64 @@ function openApp(req) {
   return { app: match };
 }
 
+// Opens a real link in the user's own default browser (macOS's own "open" picks whatever that is, not always
+// Safari) — a real window with the user's own logins, unlike fetch_url's sandboxed curl or browser_open's
+// isolated Chromium. Same checkUrl() used for fetch_url/browser_open, so this can't be pointed at the Mac's own
+// local network either.
+function openLink(req) {
+  const url = checkUrl(str(req.url, 2000));
+  const app = Application.currentApplication();
+  app.includeStandardAdditions = true;
+  try { app.doShellScript("open " + sh(url)); }
+  catch (e) { throw new Error(`couldn't open that link (${String((e && e.message) || e)})`); }
+  return { url };
+}
+
+// play/pause/nextTrack/previousTrack are standard Music.app (ex-iTunes) scripting commands, same shape as every
+// other app command used in this file. For play_query, a playlist name match wins over a track/artist/album
+// match — "play my workout playlist" should play the playlist, not search for a track named "workout".
+function musicControl(req) {
+  const action = str(req.action, 20);
+  const Music = Application("Music");
+  if (action === "play") { Music.play(); return { action }; }
+  if (action === "pause") { Music.pause(); return { action }; }
+  if (action === "next") { Music.nextTrack(); return { action }; }
+  if (action === "previous") { Music.previousTrack(); return { action }; }
+  if (action === "play_query") {
+    const query = str(req.query, 200);
+    const playlists = Music.playlists.whose({ name: { _contains: query } })();
+    if (playlists.length) { Music.play(playlists[0]); return { action, played: playlists[0].name() }; }
+    const tracks = Music.tracks.whose({ _or: [{ name: { _contains: query } }, { artist: { _contains: query } }, { album: { _contains: query } }] })();
+    if (!tracks.length) return { action, played: "" };
+    Music.play(tracks[0]);
+    return { action, played: `${tracks[0].name()} — ${tracks[0].artist()}` };
+  }
+  throw new Error(`unknown music action: ${action}`);
+}
+
+// Separate from BOON's own save_note/find_notes (plain data BOON keeps itself) — these touch the real Notes
+// app. A note's displayed title is always its body's first line (Notes derives it, there's no independent
+// "name" to set at creation), so the title goes in as a bolded first line rather than a separate property.
+function createNote(req) {
+  const title = str(req.title, 200);
+  const bodyText = req.body ? str(req.body, 5000) : "";
+  const bodyHtml = `<div><b>${escapeHtml(title)}</b></div>` + bodyText.split("\n").map((line) => `<div>${escapeHtml(line)}</div>`).join("");
+  const Notes = Application("Notes");
+  Notes.defaultAccount().notes.push(Notes.Note({ body: bodyHtml }));
+  return { title };
+}
+
+// plaintext is Notes.app's own plain-text rendering of a note's (HTML) body — used over stripTags(body()) here
+// since Notes' own HTML can include lists/checklists stripTags isn't trying to format.
+function findNote(req) {
+  const query = str(req.query, 200);
+  const Notes = Application("Notes");
+  const hits = Notes.notes.whose({ _or: [{ name: { _contains: query } }, { plaintext: { _contains: query } }] })();
+  if (!hits.length) return { found: false };
+  const n = hits[0];
+  return { found: true, title: n.name(), body: String(n.plaintext()).trim().slice(0, 2000), count: hits.length };
+}
+
 // ----- browser control (Day 6-7) -----
 // A browser window BOON's robot drives on its own, separate from whatever tab the user is reading — entirely
 // through browser-driver.js (a small Node/Playwright script install.sh copies alongside this file). It drives
@@ -423,6 +484,10 @@ function dispatch(req) {
   if (req.action === "complete_reminder") return completeReminder(req);
   if (req.action === "create_event") return createEvent(req);
   if (req.action === "open_app") return openApp(req);
+  if (req.action === "open_link") return openLink(req);
+  if (req.action === "music_control") return musicControl(req);
+  if (req.action === "create_note") return createNote(req);
+  if (req.action === "find_note") return findNote(req);
   if (req.action === "web_search") return webSearch(req);
   if (req.action === "fetch_url") return fetchUrl(req);
   if (String(req.action || "").indexOf("browser_") === 0) return runBrowserDriver(req);
