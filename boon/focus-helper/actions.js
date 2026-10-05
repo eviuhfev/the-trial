@@ -395,16 +395,21 @@ function openApp(req) {
   return { app: match };
 }
 
-// Opens a real link in the user's own default browser (macOS's own "open" picks whatever that is, not always
-// Safari) — a real window with the user's own logins, unlike fetch_url's sandboxed curl or browser_open's
-// isolated Chromium. Same checkUrl() used for fetch_url/browser_open, so this can't be pointed at the Mac's own
-// local network either.
+// Opens a real link in Chrome specifically — a real window with the user's own logins, unlike fetch_url's
+// sandboxed curl or browser_open's isolated Chromium. Targets Chrome by name rather than macOS's own "open"
+// (which follows the system default browser setting, Safari on this Mac even though Chrome is the browser
+// actually in use) so links don't land somewhere the user wasn't expecting. Falls back to the system default
+// if Chrome isn't there. Same checkUrl() used for fetch_url/browser_open, so this can't be pointed at the Mac's
+// own local network either.
 function openLink(req) {
   const url = checkUrl(str(req.url, 2000));
   const app = Application.currentApplication();
   app.includeStandardAdditions = true;
-  try { app.doShellScript("open " + sh(url)); }
-  catch (e) { throw new Error(`couldn't open that link (${String((e && e.message) || e)})`); }
+  try { app.doShellScript("open -a " + sh("Google Chrome") + " " + sh(url)); }
+  catch (e) {
+    try { app.doShellScript("open " + sh(url)); }
+    catch (e2) { throw new Error(`couldn't open that link (${String((e2 && e2.message) || e2)})`); }
+  }
   return { url };
 }
 

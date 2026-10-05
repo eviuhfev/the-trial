@@ -2864,7 +2864,7 @@ dialog input:focus { border-color: #4a4f8a; }
     TOOLS.open_mac_link = {
       label: "Opened a link",
       spec: {
-        description: "Open a web link in the user's actual browser on their Mac (whatever they've set as default) — unlike read_page or browser_open, this is a real window they'll see and can use normally, with their own logins. Use when they ask BOON to open, go to, or pull up a site or page for them, not just read it.",
+        description: "Open a web link in Chrome on the user's Mac — unlike read_page or browser_open, this is a real window they'll see and can use normally, with their own logins. Use when they ask BOON to open, go to, or pull up a site or page for them, not just read it.",
         parameters: { type: "object", properties: { url: { type: "string", description: "The page's full http(s) link to open" } }, required: ["url"] },
       },
       show: (a) => a.url || "",
