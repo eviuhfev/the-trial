@@ -2672,7 +2672,10 @@ dialog input:focus { border-color: #4a4f8a; }
   // add-on installed and set up with install.sh, even outside a focus session. Only offered to the model when the
   // add-on is present (hasLock()), so a browser without it just keeps the in-browser set_reminder. BOON asks
   // Allow/Deny first, same as delete_note and the others.
-  const MAC_APPS = ["Notes", "Reminders", "Calendar", "Music", "Safari", "Messages", "Mail", "Maps", "Photos", "Calculator", "FaceTime", "Spotify"];
+  // Safari deliberately isn't here — it overlapped with open_mac_link and the small local model would sometimes
+  // reach for "open the Safari app" instead of "open this link", launching a blank browser window instead of
+  // actually going anywhere (found 2026-10-05, jaeyoung asked for YouTube and got a bare Safari window).
+  const MAC_APPS = ["Notes", "Reminders", "Calendar", "Music", "Messages", "Mail", "Maps", "Photos", "Calculator", "FaceTime", "Spotify"];
   // reminderTime() only knows YYYY-MM-DD/today/tomorrow; dueDay() (used by add_todo) also turns a weekday into one.
   // A bare weekday that's today, with a time already past, means next week's one, not today (which just failed).
   const macArgs = (a) => {
@@ -2763,7 +2766,7 @@ dialog input:focus { border-color: #4a4f8a; }
     TOOLS.open_mac_app = {
       label: "Open a Mac app",
       spec: {
-        description: `Open one of these apps on the user's Mac: ${MAC_APPS.join(", ")}.`,
+        description: `Open one of these apps on the user's Mac: ${MAC_APPS.join(", ")}. Never for a website or link (youtube, a search, any URL) — use open_mac_link for those instead.`,
         parameters: { type: "object", properties: { app: { type: "string", enum: MAC_APPS } }, required: ["app"] },
       },
       show: (a) => a.app || "",
@@ -2864,7 +2867,7 @@ dialog input:focus { border-color: #4a4f8a; }
     TOOLS.open_mac_link = {
       label: "Opened a link",
       spec: {
-        description: "Open a web link in Chrome on the user's Mac — unlike read_page or browser_open, this is a real window they'll see and can use normally, with their own logins. Use when they ask BOON to open, go to, or pull up a site or page for them, not just read it.",
+        description: "Open a web link in Chrome on the user's Mac — unlike read_page or browser_open, this is a real window they'll see and can use normally, with their own logins. Use for ANY website, even a well-known one with no obvious URL (e.g. \"open youtube\" means https://youtube.com, \"open gmail\" means https://gmail.com) — never open_mac_app for these. Use when they ask BOON to open, go to, or pull up a site or page for them, not just read it.",
         parameters: { type: "object", properties: { url: { type: "string", description: "The page's full http(s) link to open" } }, required: ["url"] },
       },
       show: (a) => a.url || "",

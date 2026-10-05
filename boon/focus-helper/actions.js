@@ -7,7 +7,7 @@
 // Request: {"id": <number>, "action": "create_reminder"|"create_event"|"open_app"|"web_search"|"fetch_url", ...
 // fields below}. The app name for open_app is checked again here against the same allow-list BOON shows the
 // model, since this script is the last place that can say no before anything happens on the Mac.
-const APPS = ["Notes", "Reminders", "Calendar", "Music", "Safari", "Messages", "Mail", "Maps", "Photos", "Calculator", "FaceTime", "Spotify"];
+const APPS = ["Notes", "Reminders", "Calendar", "Music", "Messages", "Mail", "Maps", "Photos", "Calculator", "FaceTime", "Spotify"];
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 const MAX_BODY = 3000000;  // bytes of response read before BOON's robot sees any of it
 const MAX_TEXT = 6000;     // chars of extracted page text handed back (keeps prompts small)
@@ -397,10 +397,12 @@ function openApp(req) {
 
 // Opens a real link in Chrome specifically — a real window with the user's own logins, unlike fetch_url's
 // sandboxed curl or browser_open's isolated Chromium. Targets Chrome by name rather than macOS's own "open"
-// (which follows the system default browser setting, Safari on this Mac even though Chrome is the browser
-// actually in use) so links don't land somewhere the user wasn't expecting. Falls back to the system default
-// if Chrome isn't there. Same checkUrl() used for fetch_url/browser_open, so this can't be pointed at the Mac's
-// own local network either.
+// (which follows the system default browser — Chrome on this Mac today, but a setting that could change) so
+// links don't land somewhere the user wasn't expecting. Falls back to the system default if Chrome isn't there.
+// Same checkUrl() used for fetch_url/browser_open, so this can't be pointed at the Mac's own local network
+// either. (Chrome opening as Safari, 2026-10-05, turned out to be open_mac_app picking Safari off MAC_APPS, not
+// this function — see the MAC_APPS comment in index.html. Kept this targeted-Chrome change anyway since it's a
+// harmless belt-and-suspenders improvement over trusting the system default to stay Chrome.)
 function openLink(req) {
   const url = checkUrl(str(req.url, 2000));
   const app = Application.currentApplication();
