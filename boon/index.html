@@ -952,7 +952,7 @@ dialog input:focus { border-color: #4a4f8a; }
 
     setBusy(true);
     controller = new AbortController();
-    const history = [{ role: "system", content: SYSTEM_PROMPT }, ...chat.messages.filter((m) => !m.error && !m.kind).map(({ role, content }) => ({ role, content }))];
+    const history = [{ role: "system", content: `${SYSTEM_PROMPT} ${todayLine()}` }, ...chat.messages.filter((m) => !m.error && !m.kind).map(({ role, content }) => ({ role, content }))];
 
     try {
       try {
@@ -1404,14 +1404,18 @@ dialog input:focus { border-color: #4a4f8a; }
     "For school work or anything important, pass important: true, a link if they named a site or doc, and focus_minutes (at least 10). ";
   let macAgentPrompt = "";
   const agentPrompt = () => AGENT_PROMPT.replace("{{REMINDER_BLOCK}}", reminderBlock) + macAgentPrompt;
-  const withToday = (text) => {
+  // Computed fresh on every call (never baked into a constant) so a BOON tab left open for days — the whole
+  // point of the floating desktop icon — doesn't quietly start answering date/time questions as of whenever
+  // the page first loaded.
+  const todayLine = () => {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, "0");
     const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
     const time = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
     return `(Today is ${now.toLocaleDateString("en-US", { weekday: "long" })} ${today} and the time is ${time}, ` +
-      `time zone ${Intl.DateTimeFormat().resolvedOptions().timeZone}. For holidays and events, use the next upcoming date.)\n\n${text}`;
+      `time zone ${Intl.DateTimeFormat().resolvedOptions().timeZone}. For holidays and events, use the next upcoming date.)`;
   };
+  const withToday = (text) => `${todayLine()}\n\n${text}`;
   const AGENT_PROMPT = SYSTEM_PROMPT +
     " You are in Agent mode: you complete tasks by calling tools, one step at a time. " +
     "Never do math or date math in your head: use the calculator for arithmetic, get_datetime for today's date or the time, " +
