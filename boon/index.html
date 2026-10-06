@@ -952,20 +952,16 @@ dialog input:focus { border-color: #4a4f8a; }
 
     setBusy(true);
     controller = new AbortController();
-    // Plain chat has no calculator tool (that's Agent-mode only), and small local models reliably botch real
-    // arithmetic/date math done in their head (confirmed live: gemma3:4b given the correct date still turned
-    // "days until Christmas" into 305 instead of 80) — so steer those questions to Agent mode instead of
-    // attempting and risking a wrong answer.
-    // Tested live: without the "plain fact vs. calculation" distinction, the model started tacking "use Agent
-    // mode" onto answers that needed no calculation at all (e.g. "366 days in a leap year" — a fact it already
-    // knew right). The leap-year example is included verbatim since a concrete example steers a small model
-    // much better than an abstract rule.
-    const chatMathNote = " You don't have a calculator here. If answering would require you to actually " +
-      "calculate something (add/subtract dates, arithmetic) rather than just state a fact you already know, " +
-      "don't compute it yourself — say Agent mode (the toggle next to the input) calculates it exactly, and " +
-      "suggest switching it on. Don't mention Agent mode for plain facts you can just answer directly (e.g. " +
-      "\"how many days are in a leap year\" is just 366 — no calculation needed).";
-    const history = [{ role: "system", content: `${SYSTEM_PROMPT} ${todayLine()}${chatMathNote}` }, ...chat.messages.filter((m) => !m.error && !m.kind).map(({ role, content }) => ({ role, content }))];
+    // A prompt-only "mention Agent mode for real calculations" instruction was tried here and tested live
+    // through two revisions (7b0f480, b61fa02) — both backfired on gemma3:4b in different ways: first tacking
+    // an Agent-mode plug onto plain facts (e.g. "days in a leap year"), then, once a worked example was added
+    // to fix that, latching onto the example's own wording and dropping the fact entirely on a question shaped
+    // like it (replying with just "Agent mode... calculates it exactly", no 366, or nothing at all). A small
+    // model echoing nearby prompt text instead of reasoning from it costs more than the instruction gains, so
+    // it's dropped rather than tuned further — the deterministic dateMathAsk check below already covers the
+    // one case (date counting) actually confirmed unreliable; plain arithmetic is unhandled here but was never
+    // confirmed broken either.
+    const history = [{ role: "system", content: `${SYSTEM_PROMPT} ${todayLine()}` }, ...chat.messages.filter((m) => !m.error && !m.kind).map(({ role, content }) => ({ role, content }))];
 
     // Telling the model not to compute this itself isn't enough on its own — tested live: gemma3:4b still
     // invents a number (and the wrong one) right alongside the Agent-mode suggestion. Counting days is the one
