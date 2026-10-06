@@ -961,17 +961,32 @@ dialog input:focus { border-color: #4a4f8a; }
       "it exactly, and suggest switching it on, rather than working it out and risking a wrong answer.";
     const history = [{ role: "system", content: `${SYSTEM_PROMPT} ${todayLine()}${chatMathNote}` }, ...chat.messages.filter((m) => !m.error && !m.kind).map(({ role, content }) => ({ role, content }))];
 
+    // Telling the model not to compute this itself isn't enough on its own — tested live: gemma3:4b still
+    // invents a number (and the wrong one) right alongside the Agent-mode suggestion. Counting days is the one
+    // specific shape we've confirmed it can't be trusted with, so skip the model entirely for that and answer
+    // deterministically instead. Deliberately narrow (date-counting only, not general arithmetic) to avoid
+    // false-positive matches on ordinary messages that just happen to mention a number.
+    const dateMathAsk = !hasImage && (
+      /\bhow\s+(many|much)\s+(days?|weeks?|months?|years?)\b.{0,30}\b(until|till|left|away|from\s+now)\b/i.test(text) ||
+      /\bdays?\s+(until|till|left)\b/i.test(text) ||
+      /\b\d+\s*days?\s+(from|after|before)\b/i.test(text)
+    );
+
     try {
-      try {
-        await stream(model, history, key, bot, body);
-      } catch (err) {
-        // Free models get rate-limited or retired often; retry once on the auto router.
-        if (err.retryable && !isLocal(model) && model !== FALLBACK_MODEL && !bot.content) {
-          note = `${info?.label || model} was busy, answered by the free auto router`;
-          model = bot.model = FALLBACK_MODEL;
-          bot.reasoning = "";
+      if (dateMathAsk) {
+        bot.content = "I can't count days or do date math reliably in regular chat. Turn on Agent mode (the toggle next to the input) and ask again — it calculates this exactly.";
+      } else {
+        try {
           await stream(model, history, key, bot, body);
-        } else throw err;
+        } catch (err) {
+          // Free models get rate-limited or retired often; retry once on the auto router.
+          if (err.retryable && !isLocal(model) && model !== FALLBACK_MODEL && !bot.content) {
+            note = `${info?.label || model} was busy, answered by the free auto router`;
+            model = bot.model = FALLBACK_MODEL;
+            bot.reasoning = "";
+            await stream(model, history, key, bot, body);
+          } else throw err;
+        }
       }
     } catch (err) {
       if (err.name === "AbortError") {
