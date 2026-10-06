@@ -956,20 +956,31 @@ dialog input:focus { border-color: #4a4f8a; }
     // arithmetic/date math done in their head (confirmed live: gemma3:4b given the correct date still turned
     // "days until Christmas" into 305 instead of 80) — so steer those questions to Agent mode instead of
     // attempting and risking a wrong answer.
-    const chatMathNote = " You don't have a calculator here. For real arithmetic or date math (counting days " +
-      "between dates, etc.), don't compute it yourself — say Agent mode (the toggle next to the input) calculates " +
-      "it exactly, and suggest switching it on, rather than working it out and risking a wrong answer.";
+    // Tested live: without the "plain fact vs. calculation" distinction, the model started tacking "use Agent
+    // mode" onto answers that needed no calculation at all (e.g. "366 days in a leap year" — a fact it already
+    // knew right). The leap-year example is included verbatim since a concrete example steers a small model
+    // much better than an abstract rule.
+    const chatMathNote = " You don't have a calculator here. If answering would require you to actually " +
+      "calculate something (add/subtract dates, arithmetic) rather than just state a fact you already know, " +
+      "don't compute it yourself — say Agent mode (the toggle next to the input) calculates it exactly, and " +
+      "suggest switching it on. Don't mention Agent mode for plain facts you can just answer directly (e.g. " +
+      "\"how many days are in a leap year\" is just 366 — no calculation needed).";
     const history = [{ role: "system", content: `${SYSTEM_PROMPT} ${todayLine()}${chatMathNote}` }, ...chat.messages.filter((m) => !m.error && !m.kind).map(({ role, content }) => ({ role, content }))];
 
     // Telling the model not to compute this itself isn't enough on its own — tested live: gemma3:4b still
     // invents a number (and the wrong one) right alongside the Agent-mode suggestion. Counting days is the one
     // specific shape we've confirmed it can't be trusted with, so skip the model entirely for that and answer
     // deterministically instead. Deliberately narrow (date-counting only, not general arithmetic) to avoid
-    // false-positive matches on ordinary messages that just happen to mention a number.
+    // false-positive matches on ordinary messages that just happen to mention a number. The first form needs an
+    // explicit "how many/much" (a real counting question); the other two are guarded against matching a
+    // STATEMENT that merely mentions a day count rather than asking to compute one (tested live: "I have 3 days
+    // until my test, any study tips?" was wrongly caught and its actual question ignored) — no leading number
+    // before "days until/left" (a given count means nothing's being asked), and a "what/when" lead-in required
+    // before "N days from/after/before" (an actual question about a resulting date, not just a passing mention).
     const dateMathAsk = !hasImage && (
       /\bhow\s+(many|much)\s+(days?|weeks?|months?|years?)\b.{0,30}\b(until|till|left|away|from\s+now)\b/i.test(text) ||
-      /\bdays?\s+(until|till|left)\b/i.test(text) ||
-      /\b\d+\s*days?\s+(from|after|before)\b/i.test(text)
+      /(?<!\d\s)\bdays?\s+(until|till|left)\b/i.test(text) ||
+      /\b(what|when)[a-z']*\s.{0,20}?\d+\s*days?\s+(from|after|before)\b/i.test(text)
     );
 
     try {
