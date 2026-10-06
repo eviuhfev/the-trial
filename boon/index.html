@@ -952,7 +952,14 @@ dialog input:focus { border-color: #4a4f8a; }
 
     setBusy(true);
     controller = new AbortController();
-    const history = [{ role: "system", content: `${SYSTEM_PROMPT} ${todayLine()}` }, ...chat.messages.filter((m) => !m.error && !m.kind).map(({ role, content }) => ({ role, content }))];
+    // Plain chat has no calculator tool (that's Agent-mode only), and small local models reliably botch real
+    // arithmetic/date math done in their head (confirmed live: gemma3:4b given the correct date still turned
+    // "days until Christmas" into 305 instead of 80) — so steer those questions to Agent mode instead of
+    // attempting and risking a wrong answer.
+    const chatMathNote = " You don't have a calculator here. For real arithmetic or date math (counting days " +
+      "between dates, etc.), don't compute it yourself — say Agent mode (the toggle next to the input) calculates " +
+      "it exactly, and suggest switching it on, rather than working it out and risking a wrong answer.";
+    const history = [{ role: "system", content: `${SYSTEM_PROMPT} ${todayLine()}${chatMathNote}` }, ...chat.messages.filter((m) => !m.error && !m.kind).map(({ role, content }) => ({ role, content }))];
 
     try {
       try {
