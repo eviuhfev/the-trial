@@ -1010,6 +1010,7 @@ dialog input:focus { border-color: #4a4f8a; }
       } else if (newsAsk) {
         bot.content = "I can't pull real news in regular chat yet — I'd only be guessing, which is worse than nothing. Check a news site directly for now.";
       } else {
+        let factInjected = false;
         if (liveInfoAsk) {
           try {
             const res = await macAction("web_search", { query: text.slice(0, 300) });
@@ -1039,6 +1040,7 @@ dialog input:focus { border-color: #4a4f8a; }
                   else page = `\n\nFull page — ${res.results[0].url}:\n${body}`;
                 }
               } catch (err) { /* snippets alone are better than nothing */ }
+              factInjected = !!fact;
               const instruction = fact
                 ? "Use the FACT FROM PAGE line above as your answer, exactly — even if other text above seems to name someone else."
                 : "Only answer from what's actually stated above, word for word — never fill in a name or fact from your own training.";
@@ -1047,7 +1049,9 @@ dialog input:focus { border-color: #4a4f8a; }
               // No results at all was silently falling through to the normal (no-context) path before — the
               // model never even knew a search was tried, so the "don't guess" instruction never applied and
               // it answered from training anyway (confirmed live 2026-10-09). Make the empty case say so too.
-              last.content = `${last.content}\n\n[Live web search, fetched just now — ${todayLine()} — no results found]\n\nYou don't have current info on this. Say so plainly instead of guessing from your own training.`;
+              // Worded as a plain instruction, not "you don't have X" — that phrasing read as a rebuke and the
+              // model opened its reply apologizing for it instead of just answering (confirmed live).
+              last.content = `${last.content}\n\n[Live web search, fetched just now — ${todayLine()} — no results found]\n\nSearch found nothing on this. Tell the user plainly you couldn't find current info on it, instead of guessing.`;
             }
           } catch (err) {
             // No Focus add-on reachable, Mac asleep, search failed, etc. — answer without live context rather than failing the whole reply.
@@ -1055,6 +1059,14 @@ dialog input:focus { border-color: #4a4f8a; }
         }
         try {
           await stream(model, history, key, bot, body);
+          // Asked to "use the FACT FROM PAGE line as your answer," gemma3:4b sometimes repeats that literal
+          // label instead of just answering with it (confirmed live 2026-10-09) — rephrasing the instruction
+          // risks another round of this model latching onto different wording instead of generalizing (see
+          // the date-math backfire), so strip the label in code instead, which can't misfire either way.
+          if (factInjected) {
+            const stripped = bot.content.replace(/^\**FACT FROM PAGE:\**\s*/i, "");
+            if (stripped !== bot.content) bot.content = stripped.charAt(0).toUpperCase() + stripped.slice(1);
+          }
         } catch (err) {
           // Free models get rate-limited or retired often; retry once on the auto router.
           if (err.retryable && !isLocal(model) && model !== FALLBACK_MODEL && !bot.content) {
