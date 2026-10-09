@@ -1013,25 +1013,41 @@ dialog input:focus { border-color: #4a4f8a; }
         if (liveInfoAsk) {
           try {
             const res = await macAction("web_search", { query: text.slice(0, 300) });
+            const last = history[history.length - 1];
             if (res.results && res.results.length) {
               const top = res.results.slice(0, 5).map((r, i) => `${i + 1}. ${r.title}\n${r.url}\n${r.snippet}`).join("\n\n");
               // The snippet alone describes the office/topic, not who's in it right now (confirmed live,
               // 2026-10-09: gemma3:4b fell back to stale training and cited the snippet's URL anyway as if
               // it came from there). The real answer is further into the page (e.g. Wikipedia's "Incumbent"
               // infobox line), so fetch the top result's actual text too.
-              let page = "";
+              let page = "", fact = "";
               try {
                 const fetched = await macAction("fetch_url", { url: res.results[0].url });
-                if (fetched.text) page = `\n\nFull page — ${res.results[0].url}:\n${fetched.text.slice(0, 2500)}`;
+                if (fetched.text) {
+                  const body = fetched.text.slice(0, 2500);
+                  // Spelling out "a Successor line means they're not current" in the instruction wasn't enough
+                  // either — confirmed live 2026-10-09, 3/3 runs: asked for Apple's CEO, the fetched Tim Cook
+                  // page plainly showed "Executive chairman (2026–present) / Successor John Ternus as CEO", and
+                  // gemma3:4b still answered "Tim Cook" every time. Small models default to the page's own
+                  // subject over parsing a date range/successor field, however clearly it's spelled out — same
+                  // unreliable-instruction-following as the date-math case. Pull the fact out in code instead
+                  // and hand it over pre-computed, so there's nothing left for the model to misread.
+                  const succ = body.match(/Successor\s+([A-Z][\w.'-]+(?:\s+[A-Z][\w.'-]+){0,3})\s+as\s+([^\n/]+)/);
+                  const inc = !succ && body.match(/Incumbent\s*\/?\s*([A-Z][^\n/]+)/);
+                  if (succ) fact = `FACT FROM PAGE: the current ${succ[2].trim()} is ${succ[1].trim()}.`;
+                  else if (inc) fact = `FACT FROM PAGE: the current holder is ${inc[1].trim()}.`;
+                  else page = `\n\nFull page — ${res.results[0].url}:\n${body}`;
+                }
               } catch (err) { /* snippets alone are better than nothing */ }
-              const last = history[history.length - 1];
-              // "Only name a source if accurate" wasn't enough on its own either — confirmed live 2026-10-09:
-              // asked for Apple's CEO, the fetched Tim Cook page plainly showed "Executive chairman of Apple
-              // (2026–present) / Successor: John Ternus as CEO", and gemma3:4b still read it as "Tim Cook is
-              // CEO" — small models default to the first name on the page over parsing a date range/successor
-              // field. Spelled out explicitly below rather than tuned further if it recurs, to avoid the same
-              // prompt-tuning spiral the date-math fix went through.
-              last.content = `${last.content}\n\n[Live web search, fetched just now — ${todayLine()}]\n${top}${page}\n\nOnly answer from what's actually stated above, word for word — never fill in a name or fact from your own training. If the text shows a role or term ended (a later date range under a different title, or a "Successor" line), that person is no longer current — name whoever the text shows holds it now instead. Only name a source if it actually contains the answer. If nothing above states it, say plainly that you couldn't find current info on it.`;
+              const instruction = fact
+                ? "Use the FACT FROM PAGE line above as your answer, exactly — even if other text above seems to name someone else."
+                : "Only answer from what's actually stated above, word for word — never fill in a name or fact from your own training.";
+              last.content = `${last.content}\n\n[Live web search, fetched just now — ${todayLine()}]\n${top}${page}${fact ? "\n\n" + fact : ""}\n\n${instruction} Only name a source if it actually contains the answer. If nothing above states it, say plainly that you couldn't find current info on it.`;
+            } else {
+              // No results at all was silently falling through to the normal (no-context) path before — the
+              // model never even knew a search was tried, so the "don't guess" instruction never applied and
+              // it answered from training anyway (confirmed live 2026-10-09). Make the empty case say so too.
+              last.content = `${last.content}\n\n[Live web search, fetched just now — ${todayLine()} — no results found]\n\nYou don't have current info on this. Say so plainly instead of guessing from your own training.`;
             }
           } catch (err) {
             // No Focus add-on reachable, Mac asleep, search failed, etc. — answer without live context rather than failing the whole reply.
