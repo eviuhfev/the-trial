@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "BOON Focus",
+  "version": "1.5.1",
+  "description": "Locks your tabs during a BOON focus session and shows a floating timer. Also lets BOON's robot add Mac reminders and calendar events, open apps, search the web, and read pages. Turning off early takes a hard algebra question.",
+  "permissions": ["tabs", "webNavigation", "storage", "alarms", "scripting", "nativeMessaging"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["island.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "boon-desktop-icon",
+  "version": "1.0.0",
+  "description": "A small floating icon that lives on the desktop and opens BOON when clicked.",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^44.0.0"
+  }
+}
