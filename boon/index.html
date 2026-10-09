@@ -979,10 +979,41 @@ dialog input:focus { border-color: #4a4f8a; }
       /\b(what|when)[a-z']*\s.{0,20}?\d+\s*days?\s+(from|after|before)\b/i.test(text)
     );
 
+    // Plain chat otherwise has zero path to anything past the local model's training (jaeyoung hit this
+    // 2026-10-09 asking "who is the president of the us" and getting a stale "Joe Biden" from gemma3:4b).
+    // Rather than ask the model to self-report its own knowledge cutoff — the same shape of prompt nudge
+    // that backfired twice already on this model (see boon-agent-qwen-quirks memory) — run the existing,
+    // already-working web_search (Focus helper, Day 5) ourselves and hand the model real results to answer
+    // from, same as Agent mode does. Deliberately narrow (who's-in-charge, latest/current, news, prices,
+    // scores) rather than firing on every message: each extra category costs real seconds of Focus-helper
+    // round trip, and jaeyoung explicitly wants plain chat to stay the fast mode.
+    const liveInfoAsk = !hasImage && !dateMathAsk && hasLock() && (
+      /\bwho(?:'s|\s+is)\s+(?:the\s+)?(?:current\s+|new\s+|now\s+)?(?:\w+\s+){0,3}(president|prime\s+minister|pm|ceo|king|queen|pope|governor|mayor|chancellor|leader)\b/i.test(text) ||
+      /\b(current|latest|newest|most\s+recent)\s+(president|prime\s+minister|news|headlines?|price|score|version|events?)\b/i.test(text) ||
+      /\b(latest|breaking|recent|current)\s+news\b/i.test(text) ||
+      /\bwhat(?:'s|\s+is)\s+(?:the\s+)?news\b/i.test(text) ||
+      /\bwhat(?:'s|\s+is)\s+happening\b.{0,20}\b(today|now|this\s+week|lately|currently)\b/i.test(text) ||
+      /\bstock\s+price\b|\bshare\s+price\b|\bexchange\s+rate\b/i.test(text) ||
+      /\bwho\s+won\b|\bscore\s+of\b|\bwhat('s| was) the score\b/i.test(text) ||
+      /\bright\s+now\b|\bas\s+of\s+(today|now)\b/i.test(text)
+    );
+
     try {
       if (dateMathAsk) {
         bot.content = "I can't count days or do date math reliably in regular chat. Turn on Agent mode (the toggle next to the input) and ask again — it calculates this exactly.";
       } else {
+        if (liveInfoAsk) {
+          try {
+            const res = await macAction("web_search", { query: text.slice(0, 300) });
+            if (res.results && res.results.length) {
+              const top = res.results.slice(0, 5).map((r, i) => `${i + 1}. ${r.title}\n${r.url}\n${r.snippet}`).join("\n\n");
+              const last = history[history.length - 1];
+              last.content = `${last.content}\n\n[Live web search results, fetched just now — ${todayLine()}]\n${top}\n\nAnswer using these results if they cover the question, and name the source (the site or page). If they don't cover it, say you couldn't find current info instead of guessing from memory.`;
+            }
+          } catch (err) {
+            // No Focus add-on reachable, Mac asleep, search failed, etc. — answer without live context rather than failing the whole reply.
+          }
+        }
         try {
           await stream(model, history, key, bot, body);
         } catch (err) {
