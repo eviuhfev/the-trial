@@ -989,13 +989,26 @@ dialog input:focus { border-color: #4a4f8a; }
     // ship something that cites a confident-looking but wrong source. News/prices/scores need a different
     // backend (e.g. an RSS feed) to do properly; not built yet.
     const liveInfoAsk = !hasImage && !dateMathAsk && hasLock() && (
-      /\bwho(?:'s|\s+is)\s+(?:the\s+)?(?:current\s+|new\s+|now\s+)?(?:\w+\s+){0,3}(president|prime\s+minister|pm|ceo|king|queen|pope|governor|mayor|chancellor|leader)\b/i.test(text) ||
+      /\bwho(?:'s|s|\s+is)\s+(?:the\s+)?(?:current\s+|new\s+|now\s+)?(?:\w+\s+){0,3}(president|prime\s+minister|pm|ceo|king|queen|pope|governor|mayor|chancellor|leader)\b/i.test(text) ||
       /\b(current|latest|newest|most\s+recent)\s+(president|prime\s+minister)\b/i.test(text)
+    );
+
+    // Once plain chat knows today's date (todayLine, above), an unanswerable news question got WORSE, not
+    // better: confirmed live 2026-10-09, gemma3:4b fabricated a full fake headline rundown stamped with
+    // today's real date/time instead of declining. Same Wikipedia-backed search can't serve real headlines
+    // either (returns pages about news outlets), so there's no fix to reach for yet — answer deterministically
+    // instead of letting the model improvise, same reasoning as dateMathAsk below.
+    const newsAsk = !hasImage && !dateMathAsk && (
+      /\b(latest|breaking|recent|current)\s+news\b/i.test(text) ||
+      /\bwhat(?:'s|s|\s+is)\s+(?:the\s+)?news\b/i.test(text) ||
+      /\bwhat(?:'s|s|\s+is)\s+happening\b.{0,20}\b(today|now|this\s+week|lately|currently)\b/i.test(text)
     );
 
     try {
       if (dateMathAsk) {
         bot.content = "I can't count days or do date math reliably in regular chat. Turn on Agent mode (the toggle next to the input) and ask again — it calculates this exactly.";
+      } else if (newsAsk) {
+        bot.content = "I can't pull real news in regular chat yet — I'd only be guessing, which is worse than nothing. Check a news site directly for now.";
       } else {
         if (liveInfoAsk) {
           try {
@@ -1012,7 +1025,13 @@ dialog input:focus { border-color: #4a4f8a; }
                 if (fetched.text) page = `\n\nFull page — ${res.results[0].url}:\n${fetched.text.slice(0, 2500)}`;
               } catch (err) { /* snippets alone are better than nothing */ }
               const last = history[history.length - 1];
-              last.content = `${last.content}\n\n[Live web search, fetched just now — ${todayLine()}]\n${top}${page}\n\nOnly answer from what's actually stated above, word for word — never fill in a name or fact from your own training. Only name a source if it actually contains the answer. If nothing above states it, say plainly that you couldn't find current info on it.`;
+              // "Only name a source if accurate" wasn't enough on its own either — confirmed live 2026-10-09:
+              // asked for Apple's CEO, the fetched Tim Cook page plainly showed "Executive chairman of Apple
+              // (2026–present) / Successor: John Ternus as CEO", and gemma3:4b still read it as "Tim Cook is
+              // CEO" — small models default to the first name on the page over parsing a date range/successor
+              // field. Spelled out explicitly below rather than tuned further if it recurs, to avoid the same
+              // prompt-tuning spiral the date-math fix went through.
+              last.content = `${last.content}\n\n[Live web search, fetched just now — ${todayLine()}]\n${top}${page}\n\nOnly answer from what's actually stated above, word for word — never fill in a name or fact from your own training. If the text shows a role or term ended (a later date range under a different title, or a "Successor" line), that person is no longer current — name whoever the text shows holds it now instead. Only name a source if it actually contains the answer. If nothing above states it, say plainly that you couldn't find current info on it.`;
             }
           } catch (err) {
             // No Focus add-on reachable, Mac asleep, search failed, etc. — answer without live context rather than failing the whole reply.
