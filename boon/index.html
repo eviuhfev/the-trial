@@ -1012,22 +1012,27 @@ dialog input:focus { border-color: #4a4f8a; }
         // (2026-10-09): web_search's own backend (Bing/Wikipedia) can't carry headlines, but a real news RSS
         // feed can — same <item>/<title>/<link> extraction actions.js already uses for Bing's RSS, just
         // pointed at BBC's instead (see the "news" action and boon-live-info-search memory).
-        let newsUnavailable = false;
+        let newsUnavailable = false, newsHandled = false;
         if (newsAsk) {
           if (hasLock()) {
             try {
               const res = await macAction("news", {});
               if (res.headlines && res.headlines.length) {
-                const list = res.headlines.map((h, i) => `${i + 1}. ${h.title}\n${h.link}`).join("\n\n");
-                const last = history[history.length - 1];
-                last.content = `${last.content}\n\n[Live BBC News headlines, fetched just now — ${todayLine()}]\n${list}\n\nSummarize a handful of these for the user in your own words, and say they're from BBC News.`;
+                // Asked to "summarize" real headlines, gemma3:4b hallucinated extra context onto one instead of
+                // just relaying it — confirmed live 2026-10-09: a headline about Zack Polanski (UK Green Party)
+                // came back as "filmmaker Roman Polanski... in France", a made-up identity and location the
+                // headline never said. A headline is already written; there's nothing for the model to usefully
+                // add and real risk in letting it try, so render the real list directly instead of routing it
+                // through the model at all — same reasoning as the FACT FROM PAGE extraction above.
+                bot.content = "Here's what BBC News has right now:\n\n" + res.headlines.map((h) => `- [${h.title}](${h.link})`).join("\n");
+                newsHandled = true;
               } else newsUnavailable = true;
             } catch (err) { newsUnavailable = true; }
           } else newsUnavailable = true;
         }
         if (newsAsk && newsUnavailable) {
           bot.content = "I can't pull real news in regular chat yet — I'd only be guessing, which is worse than nothing. Check a news site directly for now.";
-        } else {
+        } else if (!newsHandled) {
         let factInjected = false;
         if (liveInfoAsk && !newsAsk) {
           try {
