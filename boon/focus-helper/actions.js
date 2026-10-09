@@ -343,6 +343,24 @@ function webSearch(req) {
   return { query: q, results };
 }
 
+// BBC's World News RSS — a standard, publicly documented feed (confirmed reachable from this Mac, 2026-10-09),
+// unlike web_search's Bing/Wikipedia backend, which can't carry real headlines (returns pages about news outlets,
+// not the news itself — see index.html's newsAsk comment). Same <item>/<title>/<link> extraction as bingSearch,
+// since it's the same RSS 2.0 shape; fetchFollow() already runs this through checkUrl(), same as bingSearch.
+function newsFeed(req) {
+  const res = fetchFollow("https://feeds.bbci.co.uk/news/rss.xml", 3);
+  const body = res.body.slice(0, MAX_BODY);
+  const headlines = [];
+  for (const item of extractAll(body, "<item>", "</item>", 15)) {
+    if (headlines.length >= 8) break;
+    const title = xmlText(firstOf(item, "<title>", "</title>"));
+    const link = firstOf(item, "<link>", "</link>").trim();
+    if (title && link) headlines.push({ title, link });
+  }
+  if (!headlines.length) throw new Error("the news feed had nothing BOON could read");
+  return { headlines };
+}
+
 function createReminder(req) {
   const title = str(req.title, 200);
   const due = when(req.due);
@@ -644,6 +662,7 @@ function dispatch(req) {
   if (req.action === "boon_file") return boonFile(req);
   if (req.action === "web_search") return webSearch(req);
   if (req.action === "fetch_url") return fetchUrl(req);
+  if (req.action === "news") return newsFeed(req);
   if (String(req.action || "").indexOf("browser_") === 0) return runBrowserDriver(req);
   throw new Error(`no such action: ${req.action}`);
 }
@@ -657,4 +676,4 @@ function run(argv) {
 }
 
 // A Node test can require() this file and call dispatch() with its own stand-in Application(), without osascript.
-if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText, relevant, createReminder, completeReminder };
+if (typeof module !== "undefined") module.exports = { dispatch, run, APPS, checkUrl, textFromHtml, decodeEntities, htmlTitle, extractAll, xmlText, relevant, createReminder, completeReminder, newsFeed };

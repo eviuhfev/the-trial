@@ -1007,11 +1007,29 @@ dialog input:focus { border-color: #4a4f8a; }
     try {
       if (dateMathAsk) {
         bot.content = "I can't count days or do date math reliably in regular chat. Turn on Agent mode (the toggle next to the input) and ask again — it calculates this exactly.";
-      } else if (newsAsk) {
-        bot.content = "I can't pull real news in regular chat yet — I'd only be guessing, which is worse than nothing. Check a news site directly for now.";
       } else {
+        // jaeyoung asked for this specifically after the first pass declined every news question outright
+        // (2026-10-09): web_search's own backend (Bing/Wikipedia) can't carry headlines, but a real news RSS
+        // feed can — same <item>/<title>/<link> extraction actions.js already uses for Bing's RSS, just
+        // pointed at BBC's instead (see the "news" action and boon-live-info-search memory).
+        let newsUnavailable = false;
+        if (newsAsk) {
+          if (hasLock()) {
+            try {
+              const res = await macAction("news", {});
+              if (res.headlines && res.headlines.length) {
+                const list = res.headlines.map((h, i) => `${i + 1}. ${h.title}\n${h.link}`).join("\n\n");
+                const last = history[history.length - 1];
+                last.content = `${last.content}\n\n[Live BBC News headlines, fetched just now — ${todayLine()}]\n${list}\n\nSummarize a handful of these for the user in your own words, and say they're from BBC News.`;
+              } else newsUnavailable = true;
+            } catch (err) { newsUnavailable = true; }
+          } else newsUnavailable = true;
+        }
+        if (newsAsk && newsUnavailable) {
+          bot.content = "I can't pull real news in regular chat yet — I'd only be guessing, which is worse than nothing. Check a news site directly for now.";
+        } else {
         let factInjected = false;
-        if (liveInfoAsk) {
+        if (liveInfoAsk && !newsAsk) {
           try {
             const res = await macAction("web_search", { query: text.slice(0, 300) });
             const last = history[history.length - 1];
@@ -1075,6 +1093,7 @@ dialog input:focus { border-color: #4a4f8a; }
             bot.reasoning = "";
             await stream(model, history, key, bot, body);
           } else throw err;
+        }
         }
       }
     } catch (err) {
