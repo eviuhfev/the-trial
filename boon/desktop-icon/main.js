@@ -180,6 +180,10 @@ ipcMain.on("boon-icon-mouse-up", () => endDrag());
 
 app.whenReady().then(() => {
   if (app.dock) app.dock.hide();
+  // Belt-and-suspenders on top of removing the right-click Quit item: Electron's default app menu still
+  // binds Cmd+Q (and Cmd+W) even with no menu bar visible. The panel window likely never becomes frontmost
+  // enough for those to even reach this app, but there's no reason to leave the path there at all.
+  Menu.setApplicationMenu(null);
   createIconWindow();
   // Command+Option+B collided with Chrome's own Bookmark Manager shortcut (jaeyoung hit this, 2026-10-04) —
   // moved to Option+Space, the shortcut the roadmap already named for D12's eventual full app.
