@@ -102,10 +102,6 @@
     // Self-heal: if the button was released while the cursor was elsewhere, the next time it passes back over
     // this window without the button held, catch up rather than staying stuck in the "pressed" visual state.
     window.addEventListener("mousemove", (e) => { if (e.buttons === 0) release(); });
-    wrap.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      window.boonIcon.rightClicked();
-    });
   </script>
 </body>
 </html>

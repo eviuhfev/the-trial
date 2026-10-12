@@ -129,14 +129,6 @@ function createIconWindow() {
   });
 }
 
-ipcMain.on("boon-icon-right-clicked", () => {
-  // No quit option by design (jaeyoung's call, 2026-10-12) — the icon should never be closable from its own UI.
-  const menu = Menu.buildFromTemplate([
-    { label: "Open BOON", click: () => openBoon() },
-  ]);
-  menu.popup({ window: iconWindow });
-});
-
 // Dragging is driven entirely from here via polling screen.getCursorScreenPoint(), not from renderer mousemove
 // events — the window is only ~84px, so a fast drag can easily carry the cursor past its edge, after which the
 // renderer gets no more mouse events at all (they go to whatever's now under the cursor) and tracking would just
@@ -180,9 +172,11 @@ ipcMain.on("boon-icon-mouse-up", () => endDrag());
 
 app.whenReady().then(() => {
   if (app.dock) app.dock.hide();
-  // Belt-and-suspenders on top of removing the right-click Quit item: Electron's default app menu still
-  // binds Cmd+Q (and Cmd+W) even with no menu bar visible. The panel window likely never becomes frontmost
-  // enough for those to even reach this app, but there's no reason to leave the path there at all.
+  // No way to quit or close the icon from its own UI, by design (jaeyoung's call, 2026-10-12, after quitting it
+  // by accident): the right-click/two-finger-click menu that used to offer "Quit" is gone entirely (removed from
+  // icon.html/preload.js/here), and Electron's default app menu has to go too — it carries Cmd+Q and Cmd+W,
+  // which could otherwise still close this app while it's focused. This only drops this app's own menu (not a
+  // globalShortcut), so Cmd+Q/W keep working everywhere else, and logout or shutdown still quit it normally.
   Menu.setApplicationMenu(null);
   createIconWindow();
   // Command+Option+B collided with Chrome's own Bookmark Manager shortcut (jaeyoung hit this, 2026-10-04) —
