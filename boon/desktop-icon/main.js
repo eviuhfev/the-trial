@@ -113,6 +113,11 @@ function createIconWindow() {
     frame: false, transparent: true, hasShadow: false,
     alwaysOnTop: true, resizable: false, movable: true,
     skipTaskbar: true, fullscreenable: false,
+    // A plain window can't actually float over a full-screen app's own Space no matter how many times
+    // setVisibleOnAllWorkspaces is re-asserted — that's an NSPanel-level capability on macOS. Without this,
+    // switching full-screen apps/Spaces strands the icon on whichever Space it was last on (found live,
+    // 2026-10-12, misread at first as the process dying rather than just being stuck off-screen).
+    type: "panel",
     webPreferences: { preload: path.join(__dirname, "preload.js") },
   });
   iconWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -125,10 +130,9 @@ function createIconWindow() {
 }
 
 ipcMain.on("boon-icon-right-clicked", () => {
+  // No quit option by design (jaeyoung's call, 2026-10-12) — the icon should never be closable from its own UI.
   const menu = Menu.buildFromTemplate([
     { label: "Open BOON", click: () => openBoon() },
-    { type: "separator" },
-    { label: "Quit BOON icon", click: () => app.quit() },
   ]);
   menu.popup({ window: iconWindow });
 });
@@ -142,6 +146,11 @@ ipcMain.on("boon-icon-right-clicked", () => {
 // cursor-left-the-window blind spot — plus a hard timeout so a missed release can never wedge the icon to the
 // cursor indefinitely.
 let drag = null;
+// A fast double (or triple) click is two full click releases in a row — without this, each one independently
+// passed the movedPx<4 check and called openBoon() again, which could pop a second browser action while the
+// first was still landing (jaeyoung's "double click thing", 2026-10-12). One release's open now covers any
+// clicks that land right behind it.
+let lastOpenAt = 0;
 function endDrag() {
   if (!drag) return;
   clearInterval(drag.interval);
@@ -149,7 +158,12 @@ function endDrag() {
   const cur = screen.getCursorScreenPoint();
   const movedPx = Math.hypot(cur.x - drag.cursorStart.x, cur.y - drag.cursorStart.y);
   drag = null;
-  if (movedPx < 4) openBoon();
+  if (movedPx < 4) {
+    const now = Date.now();
+    if (now - lastOpenAt < 600) return;
+    lastOpenAt = now;
+    openBoon();
+  }
 }
 ipcMain.on("boon-icon-mouse-down", () => {
   if (drag) endDrag();
