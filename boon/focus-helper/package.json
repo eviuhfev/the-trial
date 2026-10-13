@@ -1,0 +1,9 @@
+{
+  "name": "boon-focus-helper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BOON's Mac helper: browser automation for the agent's browser_* actions.",
+  "dependencies": {
+    "playwright": "^1.63.0"
+  }
+}
