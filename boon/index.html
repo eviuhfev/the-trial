@@ -961,7 +961,35 @@ dialog input:focus { border-color: #4a4f8a; }
     // it's dropped rather than tuned further — the deterministic dateMathAsk check below already covers the
     // one case (date counting) actually confirmed unreliable; plain arithmetic is unhandled here but was never
     // confirmed broken either.
-    const history = [{ role: "system", content: `${SYSTEM_PROMPT} ${todayLine()}` }, ...chat.messages.filter((m) => !m.error && !m.kind).map(({ role, content }) => ({ role, content }))];
+    // The system prompt carries today's date but not the clock: anything that changes near the start of the prompt
+    // makes Ollama re-read the whole chat from scratch instead of reusing what it already processed, and the time
+    // changes every minute (measured 2026-10-13 on jaeyoung's Mac: a ~1,000-token chat was re-read in full whenever
+    // the minute changed, vs. the reply starting in under a second when the start stayed the same). The date alone
+    // only changes at midnight. The time goes on the newest message instead, and only when it's actually asked
+    // about — putting it there on every message (like Agent mode's withToday) made qwen3:8b announce the date and
+    // time in reply to a plain "hello" (tested live, same day). Only this copy sent to the model gets it, so earlier
+    // turns stay identical from one message to the next. Errs toward matching: an extra clock on a message that
+    // mentions a time costs nothing, but a missed one leaves the model guessing — or reusing a stale time from its
+    // own earlier reply — where it used to always have the clock.
+    const history = [{ role: "system", content: `${SYSTEM_PROMPT} ${todayLine(false)}` }, ...chat.messages.filter((m) => !m.error && !m.kind).map(({ role, content }) => ({ role, content }))];
+    const isTimeAsk = (t) => !!t && (
+      /\bwhat\s*(?:['’]?s|\s+is)?\s+(?:the\s+)?(?:current\s+)?time\b(?!\s+(?:complexity|zone|frame|period|signature|travel|limit)|-)/i.test(t) ||
+      /\btime\s+is\s+it\b|\btime\s+(?:right\s+)?now\b|\bwhat\s+hour\b|\b(?:current|exact|local)\s+time\b|\b(?:date\s+and\s+time|time\s+and\s+date)\b/i.test(t) ||
+      /\b(?:tell|know|got|have|give)\s+(?:me\s+)?the\s+time\b/i.test(t) ||
+      /\bhow\s+(?:long|much\s+time|many\s+(?:hours?|minutes?))\b.{0,30}\b(?:until|till|left|before|since)\b|\b(?:hours?|minutes?)\s+(?:until|till|left|ago|from\s+now)\b/i.test(t) ||
+      /\b\d{1,2}(?::\d{2})?\s*[ap]\.?m\b|\b\d{1,2}:\d{2}\b|\b(?:noon|midnight|o['’]?clock)\b/i.test(t) ||
+      /\bis\s+it\s+(?:\w+\s+)?(?:morning|afternoon|evening|night|late|early)\b/i.test(t)
+    );
+    // A short follow-up like "and now?" right after a time question needs the fresh clock too.
+    const prevUser = chat.messages.slice(0, -1).reverse().find((m) => m.role === "user");
+    const timeAsk = isTimeAsk(text) ||
+      (isTimeAsk(prevUser?.display) && text.trim().split(/\s+/).length <= 5 && /\bnow\b|\?\s*$/i.test(text));
+    if (timeAsk) {
+      const latest = history[history.length - 1];
+      latest.content = typeof latest.content === "string"
+        ? withToday(latest.content)
+        : latest.content.map((p, i) => (i === 0 ? { ...p, text: withToday(p.text) } : p));
+    }
 
     // Telling the model not to compute this itself isn't enough on its own — tested live: gemma3:4b still
     // invents a number (and the wrong one) right alongside the Agent-mode suggestion. Counting days is the one
@@ -978,6 +1006,24 @@ dialog input:focus { border-color: #4a4f8a; }
       /(?<!\d\s)\bdays?\s+(until|till|left)\b/i.test(text) ||
       /\b(what|when)[a-z']*\s.{0,20}?\d+\s*days?\s+(from|after|before)\b/i.test(text)
     );
+
+    // With thinking off (see stream()), qwen3:8b gets clock math wrong — tested live 2026-10-13: at 2:36 PM,
+    // "how long until 5pm?" came back "2 hours and 3 minutes". Same fix as dateMathAsk, but this one's simple
+    // enough to just answer exactly in code. Needs am/pm or a colon (a bare "until 5" is ambiguous) or noon/midnight.
+    const until = !hasImage && text.match(/\bhow\s+(?:long|much\s+time|many\s+(?:hours?|minutes?))\b.{0,30}?\b(?:until|till|before)\s+(?:(\d{1,2})(?::(\d{2}))?\s*(?:([ap])\.?m\b)?|(noon|midnight))/i);
+    let untilAnswer = "";
+    if (until && (until[4] || ((until[2] || until[3]) && +until[1] <= 24 && +(until[2] || 0) < 60))) {
+      const now = new Date();
+      const next = (h) => { const d = new Date(now); d.setHours(h, until[4] ? 0 : +(until[2] || 0), 0, 0); if (d <= now) d.setDate(d.getDate() + 1); return d; };
+      const at = until[4] ? next(/noon/i.test(until[4]) ? 12 : 0)
+        : until[3] ? next((+until[1] % 12) + (/p/i.test(until[3]) ? 12 : 0))
+        : +until[1] > 12 ? next(+until[1] % 24)   // 24-hour time, e.g. 17:30
+        : [next(+until[1] % 12), next((+until[1] % 12) + 12)].sort((a, b) => a - b)[0];   // "3:30": whichever comes next
+      const mins = Math.round((at - now) / 60000), h = Math.floor(mins / 60), m = mins % 60;
+      const clock = (d) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      const parts = [h && `${h} hour${h === 1 ? "" : "s"}`, (m || !h) && `${m} minute${m === 1 ? "" : "s"}`].filter(Boolean);
+      untilAnswer = `It's ${clock(now)} now, so ${clock(at)}${at.getDate() !== now.getDate() ? " tomorrow" : ""} is ${parts.join(" and ")} away.`;
+    }
 
     // Plain chat otherwise has zero path to anything past the local model's training (jaeyoung hit this
     // 2026-10-09 asking "who is the president of the us" and getting a stale "Joe Biden" from gemma3:4b).
@@ -1005,7 +1051,9 @@ dialog input:focus { border-color: #4a4f8a; }
     );
 
     try {
-      if (dateMathAsk) {
+      if (untilAnswer) {
+        bot.content = untilAnswer;
+      } else if (dateMathAsk) {
         bot.content = "I can't count days or do date math reliably in regular chat. Turn on Agent mode (the toggle next to the input) and ask again — it calculates this exactly.";
       } else {
         // jaeyoung asked for this specifically after the first pass declined every news question outright
@@ -1134,7 +1182,10 @@ dialog input:focus { border-color: #4a4f8a; }
           "HTTP-Referer": location.origin && location.origin !== "null" ? location.origin : "https://github.com/eviuhfev/the-trial",
           "X-Title": "BOON",
         },
-        body: JSON.stringify({ model: local ? model.slice(LOCAL.length) : model, messages, stream: true }),
+        // Thinking off for models on this computer (same switch callVisionModel uses): qwen3 otherwise spends a long
+        // stretch thinking before every plain-chat answer (jaeyoung, 2026-10-13: "really slow because of the
+        // thoughts"); with it off, qwen3:8b answered "hello" in 2.6 s, tested live.
+        body: JSON.stringify({ model: local ? model.slice(LOCAL.length) : model, messages, stream: true, ...(local && { reasoning_effort: "none" }) }),
       });
     } catch (err) {
       if (local && err.name !== "AbortError") throw new Error("Couldn't reach Ollama on this computer. Make sure the Ollama app is running, then try again.");
@@ -1541,13 +1592,13 @@ dialog input:focus { border-color: #4a4f8a; }
   const agentPrompt = () => AGENT_PROMPT.replace("{{REMINDER_BLOCK}}", reminderBlock) + macAgentPrompt;
   // Computed fresh on every call (never baked into a constant) so a BOON tab left open for days — the whole
   // point of the floating desktop icon — doesn't quietly start answering date/time questions as of whenever
-  // the page first loaded.
-  const todayLine = () => {
+  // the page first loaded. withTime=false leaves the clock out, for plain chat's system prompt (see send()).
+  const todayLine = (withTime = true) => {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, "0");
     const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
     const time = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-    return `(Today is ${now.toLocaleDateString("en-US", { weekday: "long" })} ${today} and the time is ${time}, ` +
+    return `(Today is ${now.toLocaleDateString("en-US", { weekday: "long" })} ${today}${withTime ? ` and the time is ${time}` : ""}, ` +
       `time zone ${Intl.DateTimeFormat().resolvedOptions().timeZone}. For holidays and events, use the next upcoming date.)`;
   };
   const withToday = (text) => `${todayLine()}\n\n${text}`;
