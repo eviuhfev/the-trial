@@ -42,10 +42,15 @@ if [ ! -d node_modules/electron ]; then
   echo "Installing dependencies (downloads Electron, ~150 MB — one time only)..."
   npm install
 fi
-electron_bin="$app/node_modules/.bin/electron"
+# The real Electron binary, not node_modules/.bin/electron — that's an npm shim starting with
+# "#!/usr/bin/env node", which launchd can't run: its login-time PATH doesn't include wherever node lives
+# (confirmed live, 2026-10-13 — exit 127, "env: node: No such file or directory" in $log). The actual binary
+# needs no node to run, so it works from launchd the same as it does here.
+electron_bin="$app/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
 # npm can skip electron's postinstall (its "download the real binary" step) depending on script-safety settings,
 # leaving just a stub that would otherwise try to download it lazily on first launch — unattended, under launchd,
-# where a failure has nowhere to show up. Force that now, while we're still interactive and can see it fail.
+# where a failure has nowhere to show up. Force that now, while we're still interactive and can see it fail —
+# checking this exact path doubles as that check, since it's only there once postinstall has actually run.
 echo "Checking Electron is fully downloaded..."
 "$electron_bin" --version >/dev/null || { echo "Electron didn't install correctly." >&2; exit 1; }
 
