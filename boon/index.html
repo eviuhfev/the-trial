@@ -273,6 +273,13 @@ details.think div { white-space: pre-wrap; border-left: 2px solid var(--edge); p
 .spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #3a3f6a; border-top-color: var(--blue); animation: spin .9s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .creation .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.creation .edit-row { display: flex; gap: 8px; width: min(460px, 100%); }
+.creation .edit-row input {
+  flex: 1; min-width: 0; height: 38px;
+  border-radius: 19px; border: 1px solid var(--edge);
+  background: var(--field); padding: 0 16px; outline: none; color: var(--ink); font: inherit; font-size: 14px;
+}
+.creation .edit-row input:focus { border-color: #4a4f8a; }
 .chip-btn {
   display: inline-flex; align-items: center; gap: 7px;
   height: 38px; padding: 0 16px;
@@ -572,6 +579,8 @@ dialog input:focus { border-color: #4a4f8a; }
     <input id="hfInput" type="password" autocomplete="off" placeholder="hf_..." />
     <label for="pollenInput">Pollinations key (optional backup for images)</label>
     <input id="pollenInput" type="password" autocomplete="off" placeholder="From enter.pollinations.ai" />
+    <label for="hordeInput">AI Horde key (optional, free: <a href="https://aihorde.net/register" target="_blank" rel="noopener">aihorde.net/register</a>; puts your backup images ahead of the free line)</label>
+    <input id="hordeInput" type="password" autocomplete="off" placeholder="Leave empty to wait in the free line" />
     <label for="schoolInput">Math class link for School focus (copy it from Google Classroom)</label>
     <input id="schoolInput" type="text" inputmode="url" autocomplete="off" placeholder="https://classroom.google.com/c/..." />
     <label for="hagwonInput">Hagwon link (opens for Hagwon focus)</label>
@@ -633,7 +642,7 @@ dialog input:focus { border-color: #4a4f8a; }
     composer: $("composer"), input: $("input"), sendBtn: $("sendBtn"), stopBtn: $("stopBtn"),
     attachBtn: $("attachBtn"), fileInput: $("fileInput"), attachments: $("attachments"), createBtn: $("createBtn"), agentBtn: $("agentBtn"),
     modelSelect: $("modelSelect"), hint: $("hint"),
-    settings: $("settings"), keyInput: $("keyInput"), nameInput: $("nameInput"), hfInput: $("hfInput"), pollenInput: $("pollenInput"),
+    settings: $("settings"), keyInput: $("keyInput"), nameInput: $("nameInput"), hfInput: $("hfInput"), pollenInput: $("pollenInput"), hordeInput: $("hordeInput"),
     openSettings: $("openSettings"), menuBtn: $("menuBtn"),
     alerts: $("alerts"), reminders: $("reminders"), openReminders: $("openReminders"), reminderCount: $("reminderCount"),
     reminderList: $("reminderList"), notifyBtn: $("notifyBtn"), notifyNote: $("notifyNote"), soundHint: $("soundHint"),
@@ -1255,7 +1264,8 @@ dialog input:focus { border-color: #4a4f8a; }
 
   // ---------- create: image, then 3D ----------
   // Both steps run open-weights models on free Hugging Face Spaces through @gradio/client.
-  // Images: FLUX.1-schnell (Apache-2.0). Pollinations is the backup when a key is set in Settings.
+  // Images: FLUX.1-schnell (Apache-2.0). Pollinations is the backup when a key is set in Settings, then AI Horde.
+  // Edits: FLUX.1 Kontext, then Qwen-Image-Edit, then AI Horde (see EDIT_SOURCES).
   // 3D: Hunyuan3D-2, then Hunyuan3D-2.1 if the first is busy or down.
   // Gradio's own browser build (the default entry pulls in Node-only modules).
   const GRADIO = "https://cdn.jsdelivr.net/npm/@gradio/client@1.19.1/dist/browser.js";
@@ -1303,6 +1313,7 @@ dialog input:focus { border-color: #4a4f8a; }
     },
     {
       label: "Pollinations",
+      ready: () => !!store.get("pollen", ""),
       async run(prompt) {
         const key = store.get("pollen", "");
         if (!key) throw new Error("no Pollinations key");
@@ -1312,7 +1323,117 @@ dialog input:focus { border-color: #4a4f8a; }
         return res.blob();
       },
     },
+    {
+      label: "AI Horde",
+      run: (prompt, m) => horde(m, { prompt, params: { width: 1024, height: 1024, steps: 25, n: 1, sampler_name: "k_euler_a", cfg_scale: 6 } }),
+    },
   ];
+
+  // AI Horde (aihorde.net): an open-source network of volunteer GPUs, so it never touches the user's Hugging Face GPU
+  // time. That time is one daily pool shared by every Hugging Face Space (5 min/day on a free account), so once it's
+  // used up another Space can't stand in; AI Horde can. Anonymous, so jobs wait in a shared line: 33 s in a live test
+  // (2026-10-15), but it can be minutes. Its models are SDXL-class, a step below FLUX, and none of them edit by
+  // instruction. Anonymous jobs are capped near 1024x1024; allow_downgrade shrinks a bigger one instead of refusing it.
+  const HORDE = "https://aihorde.net/api/v2";
+  // A free personal key (Settings) puts jobs ahead of every anonymous one; without it, the shared anonymous key.
+  const hordeHeaders = () => ({ "Content-Type": "application/json", apikey: store.get("horde", "") || "0000000000", "Client-Agent": "BOON:1.0:github.com/eviuhfev/the-trial" });
+  async function horde(m, payload) {
+    const res = await fetch(`${HORDE}/generate/async`, {
+      method: "POST", headers: hordeHeaders(),
+      body: JSON.stringify({ models: ["AlbedoBase XL (SDXL)", "Juggernaut XL", "DreamShaper XL"], nsfw: false, censor_nsfw: true, r2: true, allow_downgrade: true, ...payload }),
+    });
+    const job = await res.json().catch(() => ({}));
+    if (!job.id) throw new Error(`AI Horde turned it down (${job.message || res.status}).`);
+    const started = Date.now();
+    try {
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const c = await (await fetch(`${HORDE}/generate/check/${job.id}`, { headers: hordeHeaders() })).json();
+        if (c.faulted) throw new Error("AI Horde couldn't finish the picture.");
+        if (c.done) break;
+        if (c.is_possible === false) throw new Error("no AI Horde computer can take this right now.");
+        // Its own wait estimates run far too long (it said 30 min for the 33 s test), so they aren't shown.
+        if (Date.now() - started > 10 * 60000) throw new Error("AI Horde is too busy right now (waited 10 minutes).");
+        m.status = c.processing ? "A free community GPU (AI Horde) is drawing it now…" : "Waiting in line for a free community GPU (AI Horde). This can take a minute or two…";
+        rerender(m);
+      }
+    } catch (err) {
+      fetch(`${HORDE}/generate/status/${job.id}`, { method: "DELETE", headers: hordeHeaders() }).catch(() => {});
+      throw err;
+    }
+    const g = (await (await fetch(`${HORDE}/generate/status/${job.id}`, { headers: hordeHeaders() })).json()).generations?.[0];
+    if (!g?.img) throw new Error("AI Horde didn't send back an image.");
+    if (g.censored) throw new Error("AI Horde's safety filter blocked this picture.");
+    return (await fetch(g.img.startsWith("http") ? g.img : `data:image/webp;base64,${g.img}`)).blob();   // its link expires in 30 minutes
+  }
+
+  // Editing: the image plus an instruction like "add a red hat". FLUX.1 Kontext follows the instruction and keeps the
+  // rest of the picture. Qwen-Image-Edit-Fast (a community 8-step build of Qwen-Image-Edit; the official Space needs
+  // 4 min of GPU time per edit, about a free account's whole day) covers Kontext being busy or down, but not used-up
+  // GPU time, since it's the same daily pool. Its rewrite_prompt step calls an outside service in a retry loop that can
+  // burn GPU time, so it's off. AI Horde is last: with no instruction editor, it redraws the whole picture from a
+  // description with the change folded in (img2img), which is rougher but needs no Hugging Face GPU time.
+  const gradioEdit = (id, label, params) => ({
+    label,
+    async run({ blob }, m) {
+      const app = await connect(id);
+      const res = await app.predict("/infer", params(blob, m.prompt));
+      const url = fileUrl(res.data?.[0]);
+      if (!url) throw new Error(`${label} didn't return an image.`);
+      return fetch(url).then((r) => r.blob());
+    },
+  });
+  const EDIT_SOURCES = [
+    gradioEdit("black-forest-labs/FLUX.1-Kontext-Dev", "FLUX.1 Kontext",
+      (image, prompt) => ({ input_image: image, prompt, seed: 0, randomize_seed: true, guidance_scale: 2.5, steps: 28 })),
+    gradioEdit("multimodalart/Qwen-Image-Edit-Fast", "Qwen-Image-Edit",
+      (image, prompt) => ({ image, prompt, seed: 0, randomize_seed: true, true_guidance_scale: 1, num_inference_steps: 8, rewrite_prompt: false })),
+    {
+      label: "AI Horde",
+      hint: "redrawn from a description, so rougher",
+      async run({ blob, w, h }, m) {
+        const source_image = (await blobToDataUrl(blob)).split(",")[1];
+        return horde(m, {
+          prompt: [m.basePrompt, m.prompt].filter(Boolean).join(", "), source_image, source_processing: "img2img",
+          params: { width: w, height: h, steps: 25, n: 1, denoising_strength: 0.6, cfg_scale: 6, sampler_name: "k_euler_a" },
+        });
+      },
+    },
+  ];
+
+  // At most about one megapixel (what the edit models work at anyway), same shape, so a phone photo doesn't upload at
+  // full size. Sides are rounded to 64 because AI Horde needs that.
+  async function fitImage(src, area = 1024 * 1024) {
+    const bmp = await createImageBitmap(await (await fetch(src)).blob());
+    const k = Math.min(1, Math.sqrt(area / (bmp.width * bmp.height)));
+    const w = Math.max(64, Math.round((bmp.width * k) / 64) * 64), h = Math.max(64, Math.round((bmp.height * k) / 64) * 64);
+    const canvas = Object.assign(document.createElement("canvas"), { width: w, height: h });
+    canvas.getContext("2d").drawImage(bmp, 0, 0, w, h);
+    return { blob: await new Promise((r) => canvas.toBlob(r, "image/webp", 0.95)), w, h };
+  }
+
+  // Tries each source in turn; the first image wins. If they all fail, the message keeps the FIRST real failure: that's
+  // the main model's reason (e.g. GPU time used up, which the robot also reads), and a backup's own failure would hide it.
+  async function runSources(m, sources, input, verb) {
+    let firstErr = null;
+    for (const source of sources) {
+      if (source.ready && !source.ready()) continue;
+      try {
+        if (firstErr) { m.status = `Trying ${source.label} instead…`; rerender(m); }
+        const blob = await source.run(input, m);
+        if (!blob.type.startsWith("image/")) throw new Error(`${source.label} didn't send back an image.`);
+        m.image = await blobToDataUrl(blob);   // Space links expire, so keep the image itself
+        m.imageBy = source.label;
+        const why = firstErr && (/quota|exceeded|limit/i.test(errMsg(firstErr)) ? "out of free GPU time" : "not working");
+        m.note = `${verb} by ${source.label}${source.hint ? ` (${source.hint})` : ""}${why ? ` · ${sources[0].label} was ${why} right now` : ""}`;
+        return null;
+      } catch (err) {
+        console.error("BOON image:", source.label, err);
+        firstErr ||= err;
+      }
+    }
+    return firstErr;
+  }
 
   const hunyuan = (id, label, withCaption) => ({
     id, label,
@@ -1334,6 +1455,7 @@ dialog input:focus { border-color: #4a4f8a; }
 
   let createMode = false;
   const liveModels = new Map();   // message id -> object URL of the downloaded .glb (this visit only)
+  const editing = new Set();      // ids of image cards with their "What should change?" box open (this visit only)
 
   function setCreateMode(on) {
     createMode = on;
@@ -1371,15 +1493,30 @@ dialog input:focus { border-color: #4a4f8a; }
     if (!m.image && !busy && m.prompt) actions = `<button class="chip-btn primary" data-act="retry">Try again</button>`;
     if (quota && !busy) actions = `<button class="chip-btn primary" data-act="settings">Add Hugging Face token</button>` + actions.replace(" primary", "");
     if (m.model3d && !busy && m.showImage) actions = `<button class="chip-btn primary" data-act="show3d">Show 3D model</button><button class="chip-btn" data-act="stl">Download .stl (3D print)</button><button class="chip-btn" data-act="save">Download .glb</button>`;
+    const canEdit = m.image && !busy && (!model || m.showImage);
+    if (canEdit) actions += `<button class="chip-btn" data-act="edit" aria-expanded="${editing.has(m.id)}">Edit image</button>`;
 
     const showImg = m.showImage && m.image;
     body.innerHTML = `<div class="creation">
-      <div class="prompt">${escapeHtml(m.prompt ? "“" + m.prompt + "”" : "Your image")}</div>
+      <div class="prompt">${escapeHtml(m.prompt ? (m.editOf ? "Edit: " : "") + "“" + m.prompt + "”" : "Your image")}</div>
       <div class="frame">${showImg ? `<img alt="${escapeHtml(m.prompt || "Image")}" src="${escapeHtml(m.image)}">` : frame}</div>
       ${m.error && m.image ? `<div class="error">${escapeHtml(errText)}</div>` : ""}
       ${actions ? `<div class="actions">${actions}</div>` : ""}
+      ${canEdit && editing.has(m.id) ? `<form class="edit-row"><input name="change" autocomplete="off" aria-label="What should change in the image" placeholder="What should change? e.g. add a red hat"><button class="chip-btn primary">Apply</button></form>` : ""}
       ${m.note ? `<div class="meta">${escapeHtml(m.note)}</div>` : ""}
     </div>`;
+    const form = body.querySelector(".edit-row");
+    if (form) {
+      form.change.focus();
+      form.onsubmit = (e) => {
+        e.preventDefault();
+        const change = form.change.value.trim();
+        if (!change) return;
+        editing.delete(m.id);
+        rerender(m);
+        editImage(m, change);
+      };
+    }
     const img = body.querySelector(".frame img");
     if (img) img.onerror = () => { if (!m.error) { m.error = "The image didn't load. Try again in a moment."; rerender(m); } };
     const mv = body.querySelector("model-viewer");
@@ -1396,8 +1533,9 @@ dialog input:focus { border-color: #4a4f8a; }
         if (act === "show3d") { m.showImage = false; rerender(m); }
         if (act === "save") saveModel(m);
         if (act === "stl") saveStl(m, b);
-        if (act === "retry") makeImage(m);
+        if (act === "retry") (m.editOf ? makeEdit(m) : makeImage(m));
         if (act === "settings") openSettings();
+        if (act === "edit") { editing.has(m.id) ? editing.delete(m.id) : editing.add(m.id); rerender(m); }
       };
     });
   }
@@ -1496,30 +1634,62 @@ dialog input:focus { border-color: #4a4f8a; }
     m.error = undefined;
     m.status = "Creating your image…";
     rerender(m);
-    let lastErr;
-    for (const source of IMAGE_SOURCES) {
-      try {
-        const blob = await source.run(m.imagePrompt || m.prompt);
-        if (!blob.type.startsWith("image/")) throw new Error(`${source.label} didn't send back an image.`);
-        m.image = await blobToDataUrl(blob);   // Space links expire, so keep the image itself
-        m.imageBy = source.label;
-        m.note = `Image by ${source.label}`;
-        lastErr = null;
-        break;
-      } catch (err) {
-        console.error("BOON image:", source.label, err);
-        // A skipped backup shouldn't hide the real reason the main source failed.
-        if (!lastErr || !/no Pollinations key/.test(err.message)) lastErr = err;
-      }
-    }
-    if (lastErr) m.error = friendlyError(lastErr, "Couldn't create the image");
+    const err = await runSources(m, IMAGE_SOURCES, m.imagePrompt || m.prompt, "Image");
+    if (err) m.error = friendlyError(err, "Couldn't create the image");
     delete m.status;
     touch(m); rerender(m);
   }
 
+  // An image card anywhere in the saved chats: Create mode's, or one the robot made during a task.
+  function findCreation(id) {
+    for (const c of chats) for (const x of c.messages) {
+      if (x.id === id) return x;
+      const hit = x.creations?.find((y) => y.id === id);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  // "Edit image" on a card: the change becomes a new card at the end of the chat, so the original stays as it was and
+  // the edited one gets the same buttons (edit again, make 3D). basePrompt is what the picture shows, for AI Horde,
+  // which needs a description of the whole picture rather than just the change.
+  function editImage(src, change) {
+    const chat = chatOf(src);
+    if (!chat || !change) return;
+    chat.messages.push({ role: "user", kind: "create", content: change, display: `Edit the image: ${change}`, images: [], files: [] });
+    const m = {
+      role: "assistant", kind: "image", id: uid(), prompt: change, editOf: src.id,
+      basePrompt: src.editOf ? [src.basePrompt, src.prompt].filter(Boolean).join(", ") : (src.imagePrompt || src.prompt || ""),
+    };
+    chat.messages.push(m);
+    touch(m);
+    renderThread();
+    renderList();
+    return makeEdit(m);
+  }
+
+  async function makeEdit(m) {
+    if (m.status) return;
+    m.error = undefined;
+    m.status = "Editing your image…";
+    rerender(m);
+    let err;
+    const src = findCreation(m.editOf);
+    if (!src?.image) err = new Error("the original image isn't here any more");
+    else {
+      try { err = await runSources(m, EDIT_SOURCES, await fitImage(src.image), "Edited"); }
+      catch (e) { err = e; }
+    }
+    if (err) m.error = friendlyError(err, "Couldn't edit the image");
+    delete m.status;
+    touch(m); rerender(m);
+  }
+
+  // Gradio rejects with plain status objects ({stage: "error", message}) as well as Errors.
+  const errMsg = (err) => err?.message || (err && typeof err === "object" ? JSON.stringify(err).slice(0, 200) : String(err || ""));
+
   function friendlyError(err, lead) {
-    // Gradio rejects with plain status objects ({stage: "error", message}) as well as Errors.
-    const msg = err?.message || (err && typeof err === "object" ? JSON.stringify(err).slice(0, 200) : String(err || ""));
+    const msg = errMsg(err);
     if (/quota|exceeded|limit/i.test(msg)) {
       if (store.get("hf", "")) {
         const wait = msg.match(/try again in ([\d:]+)/i)?.[1];
@@ -3865,6 +4035,7 @@ dialog input:focus { border-color: #4a4f8a; }
     els.nameInput.value = store.get("name", "");
     els.hfInput.value = store.get("hf", "");
     els.pollenInput.value = store.get("pollen", "");
+    els.hordeInput.value = store.get("horde", "");
     els.schoolInput.value = store.get("schoolLink", "");
     els.hagwonInput.value = store.get("hagwonLink", "") || HAGWON_DEFAULT;
     els.settings.showModal();
@@ -3876,6 +4047,7 @@ dialog input:focus { border-color: #4a4f8a; }
     store.set("name", els.nameInput.value.trim());
     store.set("hf", els.hfInput.value.trim());
     store.set("pollen", els.pollenInput.value.trim());
+    store.set("horde", els.hordeInput.value.trim());
     store.set("schoolLink", els.schoolInput.value.trim());
     store.set("hagwonLink", els.hagwonInput.value.trim() === HAGWON_DEFAULT ? "" : els.hagwonInput.value.trim());
     renderGreeting();
