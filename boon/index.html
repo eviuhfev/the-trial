@@ -117,22 +117,49 @@ button { cursor: pointer; }
   position: relative;
   flex: 1; min-width: 0;
   display: flex; flex-direction: column;
+  background: #0c0c13;
+  overflow: hidden;
+}
+/* The glows sit on their own layers and move by transform only, so the GPU slides them without repainting anything. */
+.bg-glows, .bg-cursor, .bg-canvas { position: absolute; z-index: 0; pointer-events: none; }
+.bg-glows {
+  inset: -40px; will-change: transform;
   background:
     radial-gradient(ellipse 45% 40% at 35% 50%, rgba(62,52,140,.38), transparent 70%),
     radial-gradient(ellipse 40% 35% at 95% 80%, rgba(40,90,120,.35), transparent 70%),
-    radial-gradient(ellipse 30% 40% at 0% 15%, rgba(40,60,110,.35), transparent 70%),
-    #0c0c13;
+    radial-gradient(ellipse 30% 40% at 0% 15%, rgba(40,60,110,.35), transparent 70%);
 }
+.bg-cursor {
+  left: 0; top: 0; width: 1000px; height: 1000px; margin: -500px 0 0 -500px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(110,95,230,.15), transparent 62%);
+  will-change: transform; transition: opacity .4s;
+}
+.bg-cursor.busy { background: radial-gradient(circle, rgba(91,140,245,.22), transparent 62%); animation: glow-pulse 1.2s ease-in-out infinite; }
+.bg-cursor.well { background: radial-gradient(circle, rgba(150,115,255,.26), transparent 55%); }
+@keyframes glow-pulse { 50% { opacity: .6; } }
 .menu-btn { display: none; }
-.scroll { flex: 1; overflow-y: auto; }
+.scroll { position: relative; z-index: 1; flex: 1; overflow-y: auto; }
+.bg-canvas { inset: 0; width: 100%; height: 100%; }
+/* Above the chat, for letters being pulled out of a held message; never takes clicks. */
+.fx-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
+.pulled { opacity: .4; transform: scale(.985); transition: opacity .35s, transform .35s; }
+body.well-hold { -webkit-user-select: none; user-select: none; }
+.copy-toast {
+  position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none;
+  padding: 6px 12px; border-radius: 14px; font-size: 13px; font-weight: 600;
+  background: #1b1e30; border: 1px solid #34386a; color: var(--ink);
+  animation: toast 1.4s ease-out forwards;
+}
+.copy-toast[hidden] { display: none; }
+@keyframes toast { 0% { opacity: 0; translate: -50% 0; } 12% { opacity: 1; translate: -50% -14px; } 80% { opacity: 1; } 100% { opacity: 0; translate: -50% -26px; } }
 .greeting {
   height: 100%;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
   padding: 0 32px;
   text-align: center;
 }
 .greeting h1 {
-  margin: 0 0 12vh;
+  margin: 0 0 28px;
   font-size: clamp(34px, 5.4vw, 88px);
   font-weight: 600;
   letter-spacing: -.02em;
@@ -176,7 +203,7 @@ button { cursor: pointer; }
 .md p { margin: 0 0 12px; }
 .md a { color: #8fb0ff; }
 .md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; background: #1d2030; padding: 1px 5px; border-radius: 5px; }
-.md pre { background: #11131c; border: 1px solid var(--edge-soft); border-radius: 12px; padding: 14px 16px; overflow-x: auto; }
+.md pre { position: relative; background: #11131c; border: 1px solid var(--edge-soft); border-radius: 12px; padding: 14px 16px; overflow-x: auto; }
 .md pre code { background: none; padding: 0; }
 .md table { border-collapse: collapse; margin: 8px 0 12px; display: block; overflow-x: auto; }
 .md th, .md td { border: 1px solid var(--edge); padding: 6px 10px; }
@@ -188,7 +215,7 @@ details.think div { white-space: pre-wrap; border-left: 2px solid var(--edge); p
 @keyframes blink { 50% { opacity: 0; } }
 
 /* ---------- composer ---------- */
-.composer-wrap { padding: 12px 28px 34px; }
+.composer-wrap { position: relative; z-index: 1; padding: 12px 28px 34px; }
 .composer {
   max-width: 1000px; margin: 0 auto;
   border: 1px solid #2c2f52;
@@ -403,6 +430,41 @@ dialog {
   padding: 26px;
 }
 dialog::backdrop { background: rgba(5,6,12,.65); backdrop-filter: blur(3px); }
+dialog label.check-row { display: flex; align-items: center; gap: 10px; color: var(--ink); cursor: pointer; }
+dialog .check-row input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--blue); }
+
+/* ---------- small interactions: suggestions, copy, drop, full-size images ---------- */
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+.suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; max-width: 680px; margin-bottom: 12vh; }
+.suggestions .chip-btn { cursor: pointer; animation: rise .4s ease-out both; animation-delay: calc(var(--i) * 60ms); }
+.thread > .msg:last-child { animation: rise .25s ease-out; }
+.msg-tools { display: flex; gap: 6px; margin-top: 6px; opacity: 0; transition: opacity .15s; }
+.msg.bot:hover .msg-tools, .msg-tools:focus-within { opacity: 1; }
+@media (hover: none) { .msg-tools { opacity: 1; } }
+.mini-btn {
+  height: 28px; padding: 0 11px; border-radius: 14px;
+  border: 1px solid var(--edge); background: #151724; color: var(--ink-dim);
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.mini-btn:hover { color: var(--ink); border-color: #34386a; }
+.md pre .code-copy { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity .15s; }
+.md pre:hover .code-copy, .md pre .code-copy:focus-visible { opacity: 1; }
+.drop-overlay {
+  position: absolute; inset: 12px; z-index: 50; pointer-events: none;
+  display: grid; place-items: center;
+  border: 2px dashed var(--blue); border-radius: 22px;
+  background: rgba(12,13,20,.85); color: var(--ink); font-size: 18px; font-weight: 600;
+}
+.drop-overlay[hidden] { display: none; }
+.greeting[hidden] { display: none; }
+.creation .frame img, .msg.user .body img { cursor: zoom-in; }
+dialog.lightbox { width: auto; max-width: 96vw; max-height: 96vh; padding: 0; border: 0; background: transparent; overflow: visible; }
+dialog.lightbox::backdrop { background: rgba(5,6,10,.9); }
+dialog.lightbox img { display: block; max-width: 94vw; max-height: 92vh; border-radius: 14px; cursor: zoom-out; }
+@media (prefers-reduced-motion: reduce) {
+  .suggestions .chip-btn, .thread > .msg:last-child, .bg-cursor.busy { animation: none; }
+  .msg-tools, .md pre .code-copy { transition: none; }
+}
 dialog h2 { margin: 0 0 6px; font-size: 20px; }
 dialog p { margin: 0 0 16px; color: var(--ink-dim); font-size: 14px; }
 dialog a { color: #8fb0ff; }
@@ -469,11 +531,17 @@ dialog input:focus { border-color: #4a4f8a; }
   </aside>
 
   <main class="main">
+    <div class="bg-glows" id="bgGlows" aria-hidden="true"></div>
+    <div class="bg-cursor" id="bgCursor" aria-hidden="true"></div>
+    <canvas class="bg-canvas" id="bgCanvas" aria-hidden="true"></canvas>
+    <canvas class="fx-canvas" id="fxCanvas" aria-hidden="true"></canvas>
+    <div class="copy-toast" id="copyToast" role="status" hidden></div>
     <button class="menu-btn" id="menuBtn" aria-label="Open chats">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
     </button>
+    <div class="drop-overlay" id="dropOverlay" hidden>Drop files to attach</div>
     <div class="scroll" id="scroll">
-      <div class="greeting" id="greeting"><h1 id="greetText"></h1></div>
+      <div class="greeting" id="greeting"><h1 id="greetText"></h1><div class="suggestions" id="suggestions"></div></div>
       <div class="thread" id="thread" hidden></div>
     </div>
 
@@ -534,6 +602,8 @@ dialog input:focus { border-color: #4a4f8a; }
   </div>
 </div>
 
+<dialog class="lightbox" id="lightbox" aria-label="Full-size image"><img alt=""></dialog>
+
 <dialog id="reminders">
   <form method="dialog">
     <h2>Reminders</h2>
@@ -579,6 +649,7 @@ dialog input:focus { border-color: #4a4f8a; }
     <input id="hfInput" type="password" autocomplete="off" placeholder="hf_..." />
     <label for="pollenInput">Pollinations key (optional backup for images)</label>
     <input id="pollenInput" type="password" autocomplete="off" placeholder="From enter.pollinations.ai" />
+    <label class="check-row"><input id="hordeOnInput" type="checkbox" /> Use AI Horde as the last backup for images (free, but slower and rougher)</label>
     <label for="hordeInput">AI Horde key (optional, free: <a href="https://aihorde.net/register" target="_blank" rel="noopener">aihorde.net/register</a>; puts your backup images ahead of the free line)</label>
     <input id="hordeInput" type="password" autocomplete="off" placeholder="Leave empty to wait in the free line" />
     <label for="schoolInput">Math class link for School focus (copy it from Google Classroom)</label>
@@ -640,9 +711,10 @@ dialog input:focus { border-color: #4a4f8a; }
     app: $("app"), chatList: $("chatList"), search: $("search"), newChat: $("newChat"),
     greeting: $("greeting"), greetText: $("greetText"), thread: $("thread"), scroll: $("scroll"),
     composer: $("composer"), input: $("input"), sendBtn: $("sendBtn"), stopBtn: $("stopBtn"),
-    attachBtn: $("attachBtn"), fileInput: $("fileInput"), attachments: $("attachments"), createBtn: $("createBtn"), agentBtn: $("agentBtn"),
+    attachBtn: $("attachBtn"), fileInput: $("fileInput"), suggestions: $("suggestions"), dropOverlay: $("dropOverlay"),
+    lightbox: $("lightbox"), main: document.querySelector(".main"), bgCanvas: $("bgCanvas"), bgGlows: $("bgGlows"), bgCursor: $("bgCursor"), fxCanvas: $("fxCanvas"), copyToast: $("copyToast"), attachments: $("attachments"), createBtn: $("createBtn"), agentBtn: $("agentBtn"),
     modelSelect: $("modelSelect"), hint: $("hint"),
-    settings: $("settings"), keyInput: $("keyInput"), nameInput: $("nameInput"), hfInput: $("hfInput"), pollenInput: $("pollenInput"), hordeInput: $("hordeInput"),
+    settings: $("settings"), keyInput: $("keyInput"), nameInput: $("nameInput"), hfInput: $("hfInput"), pollenInput: $("pollenInput"), hordeInput: $("hordeInput"), hordeOnInput: $("hordeOnInput"),
     openSettings: $("openSettings"), menuBtn: $("menuBtn"),
     alerts: $("alerts"), reminders: $("reminders"), openReminders: $("openReminders"), reminderCount: $("reminderCount"),
     reminderList: $("reminderList"), notifyBtn: $("notifyBtn"), notifyNote: $("notifyNote"), soundHint: $("soundHint"),
@@ -668,6 +740,30 @@ dialog input:focus { border-color: #4a4f8a; }
     els.greetText.innerHTML = name
       ? `What's the vibe, <span class="name">${escapeHtml(name)}</span>`
       : `What's the <span class="name">vibe</span>?`;
+  }
+
+  // Starters on the empty screen: a click fills the box (and picks the right mode) so it can be tweaked before sending.
+  const SUGGESTIONS = [
+    { label: "Explain something simply", text: "Explain how photosynthesis works like I'm 12" },
+    { label: "Quiz me", text: "Make me a 5-question quiz on the French Revolution, then check my answers" },
+    { label: "Write some code", text: "Write a simple calculator in one HTML file with CSS" },
+    { label: "Draw a picture", text: "a cozy treehouse at sunset, digital art", create: true },
+  ];
+  function renderSuggestions() {
+    els.suggestions.innerHTML = "";
+    SUGGESTIONS.forEach((sug, i) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "chip-btn"; b.textContent = sug.label;
+      b.style.setProperty("--i", i);
+      b.onclick = () => {
+        if (agentMode) setAgentMode(false);
+        if (createMode !== !!sug.create) setCreateMode(!!sug.create);
+        els.input.value = sug.text;
+        autosize();
+        els.input.focus();
+      };
+      els.suggestions.appendChild(b);
+    });
   }
 
   function renderHint() {
@@ -854,6 +950,39 @@ dialog input:focus { border-color: #4a4f8a; }
     }
     body.innerHTML = html;
     body.querySelectorAll(".md a").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; });
+    if (streaming || m.error || !m.content) return;
+    for (const pre of body.querySelectorAll(".md pre")) {
+      const b = copyButton(() => pre.querySelector("code")?.innerText ?? pre.innerText, "Copy code");
+      b.classList.add("code-copy");
+      pre.appendChild(b);
+    }
+    const tools = document.createElement("div");
+    tools.className = "msg-tools";
+    tools.appendChild(copyButton(() => m.content, "Copy"));
+    body.appendChild(tools);
+  }
+
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; }
+    catch {
+      // The clipboard API refuses when the page doesn't have focus; the old select-and-copy way still works then.
+      const t = Object.assign(document.createElement("textarea"), { value: text });
+      t.style.cssText = "position:fixed;opacity:0";
+      document.body.appendChild(t); t.select();
+      const ok = document.execCommand("copy");
+      t.remove();
+      return ok;
+    }
+  }
+
+  function copyButton(getText, label) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "mini-btn"; b.textContent = label;
+    b.onclick = async () => {
+      b.textContent = (await copyText(getText())) ? "Copied ✓" : "Couldn't copy";
+      setTimeout(() => { b.textContent = label; }, 1500);
+    };
+    return b;
   }
 
   function scrollDown(force) {
@@ -1325,11 +1454,13 @@ dialog input:focus { border-color: #4a4f8a; }
     },
     {
       label: "AI Horde",
+      ready: () => store.get("hordeOn", false),
       run: (prompt, m) => horde(m, { prompt, params: { width: 1024, height: 1024, steps: 25, n: 1, sampler_name: "k_euler_a", cfg_scale: 6 } }),
     },
   ];
 
-  // AI Horde (aihorde.net): an open-source network of volunteer GPUs, so it never touches the user's Hugging Face GPU
+  // AI Horde (aihorde.net), only when switched on in Settings (off by default: jaeyoung turned it off, 2026-10-15):
+  // an open-source network of volunteer GPUs, so it never touches the user's Hugging Face GPU
   // time. That time is one daily pool shared by every Hugging Face Space (5 min/day on a free account), so once it's
   // used up another Space can't stand in; AI Horde can. Anonymous, so jobs wait in a shared line: 33 s in a live test
   // (2026-10-15), but it can be minutes. Its models are SDXL-class, a step below FLUX, and none of them edit by
@@ -1391,6 +1522,7 @@ dialog input:focus { border-color: #4a4f8a; }
     {
       label: "AI Horde",
       hint: "redrawn from a description, so rougher",
+      ready: () => store.get("hordeOn", false),
       async run({ blob, w, h }, m) {
         const source_image = (await blobToDataUrl(blob)).split(",")[1];
         return horde(m, {
@@ -4036,6 +4168,7 @@ dialog input:focus { border-color: #4a4f8a; }
     els.hfInput.value = store.get("hf", "");
     els.pollenInput.value = store.get("pollen", "");
     els.hordeInput.value = store.get("horde", "");
+    els.hordeOnInput.checked = store.get("hordeOn", false);
     els.schoolInput.value = store.get("schoolLink", "");
     els.hagwonInput.value = store.get("hagwonLink", "") || HAGWON_DEFAULT;
     els.settings.showModal();
@@ -4048,11 +4181,293 @@ dialog input:focus { border-color: #4a4f8a; }
     store.set("hf", els.hfInput.value.trim());
     store.set("pollen", els.pollenInput.value.trim());
     store.set("horde", els.hordeInput.value.trim());
+    store.set("hordeOn", els.hordeOnInput.checked);
     store.set("schoolLink", els.schoolInput.value.trim());
     store.set("hagwonLink", els.hagwonInput.value.trim() === HAGWON_DEFAULT ? "" : els.hagwonInput.value.trim());
     renderGreeting();
     renderHint();
   });
+
+  // ---------- living background ----------
+  // A star field behind the chat that reacts to everything:
+  // - The pointer: stars sit at three depths and shift with it (parallax, the big glows too). A soft glow follows it,
+  //   and the stars near it brighten, drift aside and link up into constellations.
+  // - Holding the mouse down on empty space makes a gravity well that swirls stars into orbit around it, with a core
+  //   that grows the longer it's held; letting go flings them out. A click sends a shockwave and a spray of sparks.
+  // - Holding still on a chat message for half a second turns it into a well too: its letters get pulled out and
+  //   swirl in, and letting go copies the whole message. Moving first (a drag) is left alone, so selecting text works.
+  // - Typing lifts sparks off the message box, and a finished answer sets off a burst.
+  // - While BOON is answering (controller set), everything drifts faster and the glow turns blue and pulses.
+  // - Now and then a shooting star crosses.
+  // Kept cheap because it runs all the time (jaeyoung saw it lag in a busy Chrome, 2026-10-15): the glows are GPU
+  // layers moved by transform (never repainted), the canvas is drawn at 1x since the stars are soft dots anyway, and
+  // it draws at 60 fps only while something is happening, 30 when calm, 15 when Chrome isn't the front app. Paused
+  // while the tab is hidden; one still frame when the Mac is set to reduce motion.
+  function startBackground() {
+    const canvas = els.bgCanvas, ctx = canvas.getContext("2d", { alpha: true });
+    const still = matchMedia("(prefers-reduced-motion: reduce)");
+    const pointer = { x: -1e4, y: -1e4, gx: 0, gy: 0, px: 0, py: 0, inside: false, down: false, downAt: 0, movedAt: 0 };
+    const REACH = 180, LINK = 95, WELL = 340, TAU = 6.283;
+    let w = 0, h = 0, stars = [], ripples = [], sparks = [], shooting = null, nextShoot = 0;
+    let running = false, wasBusy = false, last = 0, lastDraw = 0, cursorCss = "", glowCss = "", cursorClass = "";
+    const fx = els.fxCanvas.getContext("2d");
+    let textWell = null, pendingHold = null, fxDirty = false;   // the message being pulled in, and a hold not yet long enough
+
+    const newStar = () => {
+      const z = [0.35, 0.65, 1][Math.floor(Math.random() * 3)];   // far, middle, near
+      const vx = (Math.random() - 0.5) * 0.18 * z, vy = (Math.random() - 0.5) * 0.18 * z;
+      return { x: Math.random() * w, y: Math.random() * h, vx, vy, bvx: vx, bvy: vy, z, r: (Math.random() * 0.9 + 0.6) * (0.6 + z * 0.7), tw: Math.random() * TAU };
+    };
+    function resize() {
+      const r = els.main.getBoundingClientRect();
+      w = r.width; h = r.height;
+      canvas.width = Math.round(w); canvas.height = Math.round(h);
+      els.fxCanvas.width = canvas.width; els.fxCanvas.height = canvas.height;
+      const n = Math.round(Math.min(160, (w * h) / 7500));
+      while (stars.length < n) stars.push(newStar());
+      stars.length = n;
+      if (!pointer.gx) { pointer.gx = w * 0.35; pointer.gy = h * 0.5; }
+      if (!running) draw(performance.now());
+    }
+    const burst = (x, y, count, speed, color) => {
+      for (let i = 0; i < count; i++) {
+        const a = Math.random() * TAU, v = speed * (0.4 + Math.random());
+        sparks.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - speed * 0.3, life: 1, decay: 0.012 + Math.random() * 0.02, color });
+      }
+    };
+    // Where the message box's top edge is, in canvas coordinates (sparks rise from there).
+    const composerTop = () => {
+      const m = els.main.getBoundingClientRect(), c = els.composer.getBoundingClientRect();
+      return { x: c.left - m.left + c.width * (0.15 + Math.random() * 0.7), y: c.top - m.top + 4 };
+    };
+
+    function draw(t) {
+      const dt = Math.min(4, last ? (t - last) / 16.7 : 1);   // frames' worth of time, so speed doesn't depend on frame rate
+      last = t;
+      const busy = !!controller, speed = (busy ? 3 : 1) * dt;
+      if (wasBusy && !busy) { const p = composerTop(); burst(p.x, p.y - 30, 40, 3.2, "150,190,255"); }
+      wasBusy = busy;
+      ctx.clearRect(0, 0, w, h);
+
+      // Parallax offset (-0.5..0.5) eases toward the pointer and slides the big glows a little.
+      const tx = pointer.inside ? pointer.x / w - 0.5 : 0, ty = pointer.inside ? pointer.y / h - 0.5 : 0;
+      pointer.px += (tx - pointer.px) * 0.05 * dt; pointer.py += (ty - pointer.py) * 0.05 * dt;
+      const g = `translate3d(${(-pointer.px * 30).toFixed(1)}px,${(-pointer.py * 30).toFixed(1)}px,0)`;
+      if (g !== glowCss) els.bgGlows.style.transform = glowCss = g;
+
+      // The cursor glow eases toward the pointer, and back to its resting spot when the pointer leaves.
+      pointer.gx += ((pointer.inside ? pointer.x : w * 0.35) - pointer.gx) * 0.08 * dt;
+      pointer.gy += ((pointer.inside ? pointer.y : h * 0.5) - pointer.gy) * 0.08 * dt;
+      const c = `translate3d(${pointer.gx.toFixed(1)}px,${pointer.gy.toFixed(1)}px,0)`;
+      if (c !== cursorCss) els.bgCursor.style.transform = cursorCss = c;
+      const cls = "bg-cursor" + (busy ? " busy" : pointer.down ? " well" : "");
+      if (cls !== cursorClass) els.bgCursor.className = cursorClass = cls;
+
+      const held = pointer.down ? Math.min(1, (t - pointer.downAt) / 1500) : 0;
+      ripples = ripples.filter((p) => t - p.t < 1000);
+      const near = [];
+      ctx.fillStyle = busy ? "rgb(150,185,255)" : "rgb(205,205,255)";
+      for (const s of stars) {
+        let sx = s.x - pointer.px * 40 * s.z, sy = s.y - pointer.py * 40 * s.z;   // where it's drawn (parallax)
+        const dx = sx - pointer.x, dy = sy - pointer.y, d = Math.hypot(dx, dy) || 1;
+        let k = d < REACH ? 1 - d / REACH : 0;
+        if (pointer.down && d < WELL) {
+          // Gravity well: each star spirals in to its own orbit (8-46 px out) and circles there, faster the closer it
+          // is and the longer the button is held. Moved directly rather than by forces, which flung stars straight back
+          // out. Its last step is kept as its velocity, so letting go throws it outward.
+          const orbit = 8 + (s.tw / TAU) * 38, r = Math.max(orbit, d - (2 + held * 4) * dt);
+          const ang = Math.atan2(dy, dx) + (0.025 + held * 0.035) * dt * (1.5 - d / WELL);
+          const nx = pointer.x + Math.cos(ang) * r, ny = pointer.y + Math.sin(ang) * r, step = Math.max(speed, 0.01);
+          s.vx = Math.max(-6, Math.min(6, (nx - sx) / step)); s.vy = Math.max(-6, Math.min(6, (ny - sy) / step));
+          s.x += nx - sx; s.y += ny - sy; sx = nx; sy = ny; k = 1;
+        } else {
+          if (k) { s.vx += (dx / d) * k * 0.05 * dt; s.vy += (dy / d) * k * 0.05 * dt; }
+          // Shockwaves push stars outward as their ring passes.
+          for (const p of ripples) {
+            const rad = 12 + ((t - p.t) / 1000) * 260, rx = sx - p.x, ry = sy - p.y, rd = Math.hypot(rx, ry) || 1;
+            if (Math.abs(rd - rad) < 22) { s.vx += (rx / rd) * 0.5 * dt; s.vy += (ry / rd) * 0.5 * dt; }
+          }
+          // Drift back toward each star's own slow speed, so pushes fade out.
+          s.vx += (s.bvx - s.vx) * 0.02 * dt; s.vy += (s.bvy - s.vy) * 0.02 * dt;
+          s.x = (s.x + s.vx * speed + w) % w; s.y = (s.y + s.vy * speed + h) % h;
+        }
+        ctx.globalAlpha = Math.min(1, (0.2 + 0.22 * s.z) + 0.18 * Math.sin(t / 900 + s.tw) + k * 0.65);
+        ctx.beginPath(); ctx.arc(sx, sy, s.r * (1 + k * 0.8), 0, TAU); ctx.fill();
+        if (k > 0.1) near.push({ x: sx, y: sy, k });
+      }
+
+      // Constellations: stars near the pointer link to it and to each other.
+      ctx.lineWidth = 0.8;
+      ctx.strokeStyle = "rgb(150,165,255)";
+      for (let i = 0; i < near.length; i++) {
+        const a = near[i];
+        ctx.globalAlpha = a.k * (pointer.down ? 0.25 : 0.4);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(pointer.x, pointer.y); ctx.stroke();
+        for (let j = i + 1; j < near.length && j < i + 24; j++) {
+          const b = near[j], d = Math.hypot(a.x - b.x, a.y - b.y);
+          if (d < LINK) {
+            ctx.globalAlpha = (1 - d / LINK) * Math.min(a.k, b.k) * 0.7;
+            ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+          }
+        }
+      }
+
+      // The well's core: a bright point inside a ring that grows the longer it's held.
+      if (pointer.down) {
+        ctx.globalAlpha = 0.5 + held * 0.4;
+        ctx.strokeStyle = "rgb(170,150,255)"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(pointer.x, pointer.y, 10 + held * 40 + Math.sin(t / 120) * 2, 0, TAU); ctx.stroke();
+        ctx.fillStyle = "rgb(235,230,255)";
+        ctx.beginPath(); ctx.arc(pointer.x, pointer.y, 2.5 + held * 3, 0, TAU); ctx.fill();
+      }
+
+      ctx.strokeStyle = "rgb(122,167,255)"; ctx.lineWidth = 1.5;
+      for (const p of ripples) {
+        const k = (t - p.t) / 1000;
+        ctx.globalAlpha = 0.55 * (1 - k);
+        ctx.beginPath(); ctx.arc(p.x, p.y, 12 + k * 260, 0, TAU); ctx.stroke();
+      }
+
+      sparks = sparks.filter((p) => p.life > 0);
+      for (const p of sparks) {
+        p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 0.03 * dt; p.vx *= 0.985; p.life -= p.decay * dt;
+        ctx.globalAlpha = Math.max(0, p.life);
+        ctx.fillStyle = `rgb(${p.color})`;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 1.6 * p.life + 0.5, 0, TAU); ctx.fill();
+      }
+
+      if (!shooting && t > nextShoot) {
+        if (nextShoot) shooting = { x: Math.random() * w * 0.7, y: Math.random() * h * 0.35, t };
+        nextShoot = t + 6000 + Math.random() * 9000;
+      }
+      if (shooting) {
+        const k = (t - shooting.t) / 900;
+        if (k >= 1) shooting = null;
+        else {
+          const hx = shooting.x + k * 340, hy = shooting.y + k * 140;
+          ctx.globalAlpha = 0.8 * (1 - k);
+          const tail = ctx.createLinearGradient(hx - 120, hy - 50, hx, hy);
+          tail.addColorStop(0, "rgba(220,230,255,0)"); tail.addColorStop(1, "rgb(220,230,255)");
+          ctx.strokeStyle = tail; ctx.lineWidth = 1.6;
+          ctx.beginPath(); ctx.moveTo(hx - 120, hy - 50); ctx.lineTo(hx, hy); ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+      drawLetters(t, dt);
+    }
+
+    // Letters of the held message, each spiralling from where it sat into the well, fading as it reaches the core.
+    function drawLetters(t, dt) {
+      if (!textWell && !fxDirty) return;
+      fx.clearRect(0, 0, w, h);
+      fxDirty = !!textWell;
+      if (!textWell) return;
+      fx.font = "600 14px " + getComputedStyle(document.body).fontFamily;
+      fx.textAlign = "center"; fx.textBaseline = "middle";
+      fx.fillStyle = "rgb(225,225,255)";
+      const held = Math.min(1, (t - textWell.t) / 1200);
+      for (const l of textWell.letters) {
+        if (t < l.start) { fx.globalAlpha = 0.9; fx.fillText(l.ch, l.x, l.y); continue; }
+        const dx = l.x - pointer.x, dy = l.y - pointer.y, d = Math.hypot(dx, dy) || 1;
+        // Mostly straight in (a share of the distance each frame), with a sideways drift of a few pixels per frame
+        // that curls it round only near the core; a fixed spin rate swung far letters in huge arcs across the screen.
+        const r = Math.max(0, d * (1 - (0.06 + held * 0.06) * dt) - 1.5 * dt);
+        const ang = Math.atan2(dy, dx) + ((3 + held * 3) / Math.max(d, 25)) * dt;
+        l.x = pointer.x + Math.cos(ang) * r; l.y = pointer.y + Math.sin(ang) * r;
+        fx.globalAlpha = Math.min(1, r / 40);
+        fx.fillText(l.ch, l.x, l.y);
+      }
+      textWell.letters = textWell.letters.filter((l) => t < l.start || Math.hypot(l.x - pointer.x, l.y - pointer.y) > 3);
+      fx.globalAlpha = 1;
+    }
+
+    function startTextWell(el, x, y) {
+      const text = el.innerText.trim();
+      if (!text) return;
+      const m = els.main.getBoundingClientRect(), t0 = performance.now();
+      // A sample of the message's own letters, scattered over where the message sits, released a few at a time.
+      const chars = [...text.replace(/\s+/g, "")].slice(0, 180);
+      const box = el.getBoundingClientRect();
+      const letters = chars.map((ch, i) => ({
+        ch, x: box.left - m.left + Math.random() * box.width, y: box.top - m.top + Math.random() * box.height,
+        start: t0 + (i / chars.length) * 700,
+      }));
+      textWell = { el, text, letters, t: t0 };
+      el.classList.add("pulled");
+      document.body.classList.add("well-hold");
+      getSelection()?.removeAllRanges();
+      Object.assign(pointer, { x, y, down: true, downAt: t0, inside: true, movedAt: t0 });
+      ripples.push({ x, y, t: t0 });
+    }
+
+    async function finishTextWell() {
+      const { el, text } = textWell;
+      textWell = null;
+      el.classList.remove("pulled");
+      document.body.classList.remove("well-hold");
+      const ok = await copyText(text);
+      burst(pointer.x, pointer.y, ok ? 30 : 10, 2.6, ok ? "150,230,190" : "255,140,150");
+      const toast = els.copyToast;
+      toast.textContent = ok ? "Copied ✓" : "Couldn't copy";
+      toast.style.transform = `translate(${pointer.x}px, ${pointer.y - 18}px)`;
+      toast.hidden = true; void toast.offsetWidth; toast.hidden = false;   // restart its fade-out animation
+      clearTimeout(toast.timer);
+      toast.timer = setTimeout(() => { toast.hidden = true; }, 1400);
+    }
+
+    function loop(t) {
+      if (still.matches || document.hidden) { running = false; return; }
+      requestAnimationFrame(loop);
+      const lively = pointer.down || textWell || fxDirty || controller || sparks.length || ripples.length || shooting || t - pointer.movedAt < 1500;
+      const gap = !document.hasFocus() ? 66 : lively ? 0 : 33;
+      if (t - lastDraw < gap) return;
+      lastDraw = t;
+      draw(t);
+    }
+    function start() { if (!running && !still.matches && !document.hidden) { running = true; last = 0; requestAnimationFrame(loop); } }
+
+    const at = (e) => { const r = els.main.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+    // Only the background itself: not messages, buttons, links, the message box or open dialogs.
+    const onBackground = (e) => !e.target.closest("button, a, input, textarea, select, label, summary, .composer, .msg .body, .greeting h1, dialog, model-viewer");
+    els.main.addEventListener("pointermove", (e) => {
+      Object.assign(pointer, at(e), { inside: true, movedAt: performance.now() });
+      // Moving before the hold kicks in means a drag (selecting text), so leave it alone.
+      if (pendingHold && Math.hypot(e.clientX - pendingHold.cx, e.clientY - pendingHold.cy) > 6) { clearTimeout(pendingHold.timer); pendingHold = null; }
+    });
+    els.main.addEventListener("pointerleave", () => { if (!pointer.down) Object.assign(pointer, { inside: false, x: -1e4, y: -1e4 }); });
+    els.main.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      const msg = !still.matches && e.target.closest(".msg.bot .md, .msg.user .body");
+      if (msg && !e.target.closest("a, button, pre")) {
+        const p = at(e);
+        pendingHold = { cx: e.clientX, cy: e.clientY, timer: setTimeout(() => { pendingHold = null; startTextWell(msg, p.x, p.y); }, 450) };
+        return;
+      }
+      if (!onBackground(e)) return;
+      e.preventDefault();   // holding still shouldn't start selecting text
+      const p = at(e);
+      Object.assign(pointer, p, { down: true, downAt: performance.now(), inside: true, movedAt: performance.now() });
+      ripples.push({ ...p, t: performance.now() });
+      burst(p.x, p.y, 14, 2.2, "170,160,255");
+    });
+    const release = () => {
+      if (pendingHold) { clearTimeout(pendingHold.timer); pendingHold = null; }
+      if (textWell) { pointer.down = false; finishTextWell(); return; }
+      if (!pointer.down) return;
+      pointer.down = false;
+      // Letting go of a long hold flings the gathered stars back out.
+      if (performance.now() - pointer.downAt > 400) ripples.push({ x: pointer.x, y: pointer.y, t: performance.now() });
+    };
+    addEventListener("pointerup", release);
+    addEventListener("pointercancel", release);
+    addEventListener("blur", release);
+    els.input.addEventListener("input", () => { if (running) { const p = composerTop(); burst(p.x, p.y, 2, 1.2, "190,170,255"); } });
+    document.addEventListener("visibilitychange", start);
+    still.addEventListener("change", () => { start(); if (still.matches) draw(performance.now()); });
+    new ResizeObserver(resize).observe(els.main);
+    resize();
+    start();
+  }
 
   // ---------- wiring ----------
   function autosize() {
@@ -4072,13 +4487,48 @@ dialog input:focus { border-color: #4a4f8a; }
   els.attachBtn.onclick = () => els.fileInput.click();
   els.createBtn.onclick = () => { if (agentMode) setAgentMode(false); setCreateMode(!createMode); };
   els.agentBtn.onclick = () => { if (createMode) setCreateMode(false); setAgentMode(!agentMode); };
-  els.fileInput.onchange = async () => {
-    for (const f of els.fileInput.files) {
+  async function addFiles(files) {
+    for (const f of files) {
       try { pending.push(await readFile(f)); } catch {}
     }
-    els.fileInput.value = "";
     renderAttachments();
+    els.input.focus();
+  }
+  els.fileInput.onchange = async () => {
+    await addFiles([...els.fileInput.files]);
+    els.fileInput.value = "";
   };
+  // Drop files anywhere on the chat, or paste a copied image into the box. A depth counter, because dragenter/leave
+  // fire for every child element the pointer crosses.
+  let dragDepth = 0;
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  els.main.addEventListener("dragenter", (e) => { if (hasFiles(e)) { dragDepth++; els.dropOverlay.hidden = false; } });
+  els.main.addEventListener("dragleave", (e) => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; els.dropOverlay.hidden = true; } });
+  els.main.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+  els.main.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0; els.dropOverlay.hidden = true;
+    addFiles([...e.dataTransfer.files]);
+  });
+  els.input.addEventListener("paste", (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length) return;   // plain text pastes as usual
+    e.preventDefault();
+    addFiles(files);
+  });
+  // Click a picture in the chat to see it full size; a click or Esc closes it.
+  els.thread.addEventListener("click", (e) => {
+    const img = e.target.closest(".creation .frame img, .msg.user .body img");
+    if (!img) return;
+    els.lightbox.querySelector("img").src = img.src;
+    els.lightbox.showModal();
+  });
+  els.lightbox.onclick = () => els.lightbox.close();
+  // Esc stops an answer that's still coming, unless a dialog is open (Esc closes that instead).
+  addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && controller && !document.querySelector("dialog[open]")) controller.abort();
+  });
   els.openSettings.onclick = openSettings;
   els.openReminders.onclick = () => { els.reminders.showModal(); renderReminders(); };
   els.openNotes.onclick = () => { els.notes.showModal(); renderNotes(); };
@@ -4123,6 +4573,8 @@ dialog input:focus { border-color: #4a4f8a; }
   }
 
   renderGreeting();
+  renderSuggestions();
+  startBackground();
   startReminderClock();
   renderNotes();
   renderHint();

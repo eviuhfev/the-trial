@@ -172,6 +172,9 @@ ipcMain.on("boon-icon-mouse-up", () => endDrag());
 
 app.whenReady().then(() => {
   if (app.dock) app.dock.hide();
+  // The icon starts at login (install.sh's LaunchAgent) but the website used to start only on the first click, so after
+  // a restart BOON's tab showed nothing until then (jaeyoung hit this, 2026-10-21). Start it up front instead.
+  boonIsUp().then((up) => { if (!up) startBoonServer(); });
   // No way to quit or close the icon from its own UI, by design (jaeyoung's call, 2026-10-12, after quitting it
   // by accident): the right-click/two-finger-click menu that used to offer "Quit" is gone entirely (removed from
   // icon.html/preload.js/here), and Electron's default app menu has to go too — it carries Cmd+Q and Cmd+W,
