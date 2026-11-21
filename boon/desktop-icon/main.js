@@ -57,8 +57,10 @@ function startBoonServer() {
   });
   server.unref();
 }
-function focusOrOpenBoonTab() {
-  execFile("osascript", ["-l", "JavaScript", path.join(__dirname, "open-boon.js")], (err, stdout, stderr) => {
+function focusOrOpenBoonTab(mode = "") {
+  const args = ["-l", "JavaScript", path.join(__dirname, "open-boon.js")];
+  if (mode) args.push(mode);
+  execFile("osascript", args, (err, stdout, stderr) => {
     if (err) {
       // Most likely cause: jaeyoung hasn't (or hasn't yet) allowed this app to control Google Chrome. Falls back
       // to a plain launch — it can't focus an existing BOON tab without that permission, but it still gets BOON
@@ -68,12 +70,12 @@ function focusOrOpenBoonTab() {
     }
   });
 }
-async function openBoon() {
+async function openBoon(mode = "") {
   if (!(await boonIsUp())) {
     startBoonServer();
     await new Promise((r) => setTimeout(r, 700));
   }
-  focusOrOpenBoonTab();
+  focusOrOpenBoonTab(mode);
 }
 
 // Two instances would each register their own Option+Space, and whichever lost that registration race
@@ -143,6 +145,18 @@ let drag = null;
 // first was still landing (jaeyoung's "double click thing", 2026-10-12). One release's open now covers any
 // clicks that land right behind it.
 let lastOpenAt = 0;
+// A click used to jump straight to BOON every time; now it offers a short menu of what the tap is for instead,
+// so BOON knows which. More items can join this list later. "View the screen" and "Focus mode" just open BOON
+// for now, same as before, until those are built out.
+function showIconMenu() {
+  const menu = Menu.buildFromTemplate([
+    { label: "Work in this document", click: () => openBoon("work_in_doc") },
+    { label: "View the screen", click: () => openBoon("view_screen") },
+    { label: "Send to BOON", click: () => openBoon() },
+    { label: "Focus mode", click: () => openBoon("focus") },
+  ]);
+  menu.popup({ window: iconWindow });
+}
 function endDrag() {
   if (!drag) return;
   clearInterval(drag.interval);
@@ -154,7 +168,7 @@ function endDrag() {
     const now = Date.now();
     if (now - lastOpenAt < 600) return;
     lastOpenAt = now;
-    openBoon();
+    showIconMenu();
   }
 }
 ipcMain.on("boon-icon-mouse-down", () => {

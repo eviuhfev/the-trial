@@ -2784,6 +2784,24 @@ dialog input:focus { border-color: #4a4f8a; }
       els.quizLock.hidden = !e.data.event.on;
     }
   });
+  // A tap on the floating desktop icon can ask for something specific instead of just opening BOON; the icon
+  // app passes which one as a URL hash (a fresh tab/window — nothing yet to disturb) or, for a BOON tab
+  // that's already open, as this message instead of a reload, which would drop whatever chat was in progress.
+  function handleIconMode(mode) {
+    if (mode !== "work_in_doc") return;   // the other modes just open BOON for now, same as before
+    setAgentMode(true);
+    if (!controller) send("Read the Google Doc I have open right now and tell me what's in it, then ask what I'd like to add to it.");
+  }
+  addEventListener("message", (e) => {
+    if (e.source !== window || e.data?.source !== "boon-icon-tap") return;
+    handleIconMode(e.data.mode);
+  });
+  if (location.hash.startsWith("#mode=")) {
+    const mode = decodeURIComponent(location.hash.slice(6));
+    history.replaceState(null, "", location.pathname + location.search);
+    // Deferred: this runs at script load, before agentMode/send below are assigned their initial values.
+    setTimeout(() => handleIconMode(mode), 0);
+  }
   // After a reload, pick the running lock back up (or clear a lock the extension already ended).
   async function syncLock() {
     if (!hasLock()) return;
