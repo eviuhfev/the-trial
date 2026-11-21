@@ -3537,6 +3537,41 @@ dialog input:focus { border-color: #4a4f8a; }
     };
     macAgentPrompt += " To click something in a browser_open window, call browser_click with a plain description of it; to type into a field, call browser_type. " +
       "Both refuse anything shaped like submit, pay, send, sign in/up, log in/out, confirm, subscribe, delete, or remove, and a password field — if the task needs one of those, tell the user what to click/type and let them do that step.";
+
+    // ----- Google Docs: the doc the user actually has open, not a copy of it -----
+    TOOLS.read_google_doc = {
+      label: "Read the Google Doc",
+      spec: {
+        description: "Read the text of the Google Doc the user currently has open in their own browser — the real document, not a copy. Use this before adding to it, or whenever they ask what it says, to check it, or to continue or fix something in it.",
+        parameters: { type: "object", properties: {} },
+      },
+      show: () => "",
+      run: async () => {
+        const res = await ext({ type: "docs_read" }, 15000);
+        if (!res) throw new Error("No answer from the browser extension in 15 seconds.");
+        if (!res.ok) throw new Error(res.error || "Couldn't read the doc.");
+        return `"${res.title}"\n${res.url}\n\n${res.text || "(the document is empty)"}`;
+      },
+    };
+    TOOLS.write_google_doc = {
+      label: "Added to the Google Doc",
+      spec: {
+        description: "Add a new paragraph to the END of the Google Doc the user currently has open — it does not change or remove anything already there. When they asked you to write or continue something (an essay, a section, notes…), put the FULL text you composed in text yourself, not a placeholder. There's no way yet to edit a specific part of the doc, only add to the end — say so plainly if that's what's actually needed.",
+        parameters: { type: "object", properties: {
+          text: { type: "string", description: "The full text to add, right after the document's current last line" },
+        }, required: ["text"] },
+      },
+      show: (a) => String(a.text || "").slice(0, 60),
+      run: async (a) => {
+        const text = String(a.text || "").trim();
+        if (!text) throw new Error("Nothing to add.");
+        const res = await ext({ type: "docs_append", text }, 15000);
+        if (!res) throw new Error("No answer from the browser extension in 15 seconds.");
+        if (!res.ok) throw new Error(res.error || "Couldn't add that to the doc.");
+        return `Added to the end of "${res.title}".`;
+      },
+    };
+    macAgentPrompt += " To read the Google Doc the user currently has open in their browser, call read_google_doc; to add new text to the end of it, call write_google_doc with the full text to add — it can only add to the end, not edit the middle, so say that plainly if asked to change text already there.";
   }
 
   // ----- action log -----

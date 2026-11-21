@@ -468,6 +468,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       const { type: _drop, ...args } = msg;
       return await runMacAction(type, args);
     }
+    if (type === "docs_read") return await docsRead(msg);
+    if (type === "docs_append") return await docsAppend(msg);
     return null;
   })().then(reply, (e) => reply({ ok: false, error: String(e?.message || e) }));
   return true;
@@ -498,6 +500,75 @@ async function showIslandEverywhere() {
 async function reinjectBridgeEverywhere() {
   const tabs = await chrome.tabs.query({ url: ["http://localhost/*", "http://127.0.0.1/*"] }).catch(() => []);
   for (const t of tabs) chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["bridge.js"] }).catch(() => {});
+}
+
+// ----- Google Docs: read and add to whatever doc the user has open in their own browser -----
+// No Mac helper involved — this only needs the extension itself, so it works on any computer BOON Focus is in.
+async function findDocsTab(tabId) {
+  if (tabId) {
+    const t = await chrome.tabs.get(tabId).catch(() => null);
+    return t && /^https:\/\/docs\.google\.com\/document\//.test(t.url || "") ? t : null;
+  }
+  const tabs = await chrome.tabs.query({ url: "https://docs.google.com/document/*" }).catch(() => []);
+  if (!tabs.length) return null;
+  // The one the user looked at most recently, if more than one is open.
+  tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+  return tabs[0];
+}
+const docTitle = (tab) => String(tab.title || "Untitled document").replace(/\s*-\s*Google\s*Docs\s*$/i, "");
+// Runs inside the doc's own tab. Docs paints the page itself out of many small positioned nodes, so a plain
+// innerText grab would also catch the menu bar and sidebar — this walks the actual page content specifically,
+// falling back to innerText (noisier, but still readable) if Google ever renames these classes.
+function scrapeDocText() {
+  const blocks = document.querySelectorAll(".kix-page .kix-paragraphrenderer");
+  return blocks.length ? Array.from(blocks).map((b) => b.textContent || "").join("\n") : document.body.innerText;
+}
+function docEditorPoint() {
+  const el = document.querySelector(".kix-appview-editor") || document.body;
+  const r = el.getBoundingClientRect();
+  return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + Math.min(r.height / 2, 200)) };
+}
+async function docsRead(msg) {
+  const tab = await findDocsTab(msg.tabId);
+  if (!tab) return { ok: false, error: "No Google Doc is open in this browser right now." };
+  const got = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: scrapeDocText }).catch(() => []);
+  const text = got?.[0]?.result;
+  if (text == null) return { ok: false, error: "Couldn't read that doc — try reloading its tab." };
+  return { ok: true, title: docTitle(tab), url: tab.url, text: String(text).trim().slice(0, 20000) };
+}
+// Typing for real (not a script-dispatched DOM event) is the only way Docs' own editor reliably picks it up —
+// so this briefly attaches Chrome's own debugger protocol to the doc's tab, which is why Chrome shows its
+// "started debugging this browser" banner for the moment this runs, then detaches right away.
+async function docsAppend(msg) {
+  const tab = await findDocsTab(msg.tabId);
+  if (!tab) return { ok: false, error: "No Google Doc is open in this browser right now." };
+  const text = String(msg.text ?? "").trim();
+  if (!text) return { ok: false, error: "Nothing to add." };
+  const got = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: docEditorPoint }).catch(() => []);
+  const box = got?.[0]?.result;
+  if (!box) return { ok: false, error: "Couldn't find the document area to type into." };
+  try {
+    await chrome.debugger.attach({ tabId: tab.id }, "1.3");
+  } catch (e) {
+    return { ok: false, error: `Couldn't start typing in the doc (${e?.message || e}).` };
+  }
+  try {
+    const cdp = (method, params) => chrome.debugger.sendCommand({ tabId: tab.id }, method, params);
+    await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: box.x, y: box.y, button: "left", clickCount: 1 });
+    await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x, y: box.y, button: "left", clickCount: 1 });
+    const mod = /Mac/.test(navigator.platform) ? 4 : 2; // Cmd on Mac, Ctrl elsewhere
+    // Select-all then collapse right, rather than trusting a Home/End keybinding, to land the caret at the
+    // very end of the document — select-all is the one editing shortcut every rich text editor, Docs included,
+    // is certain to support the same way.
+    await cdp("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "a", code: "KeyA", modifiers: mod });
+    await cdp("Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA", modifiers: mod });
+    await cdp("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "ArrowRight", code: "ArrowRight" });
+    await cdp("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight" });
+    await cdp("Input.insertText", { text: "\n" + text });
+  } finally {
+    await chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
+  }
+  return { ok: true, title: docTitle(tab) };
 }
 
 // ----- the locks -----
