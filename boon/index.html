@@ -2785,23 +2785,27 @@ dialog input:focus { border-color: #4a4f8a; }
     }
   });
   // A tap on the floating desktop icon can ask for something specific instead of just opening BOON; the icon
-  // app passes which one as a URL hash (a fresh tab/window — nothing yet to disturb) or, for a BOON tab
-  // that's already open, as this message instead of a reload, which would drop whatever chat was in progress.
+  // app passes which one as a URL hash. On a tab already open, Chrome treats that as a same-document
+  // navigation (same origin and path, only the hash differs) — no reload, just a hashchange — so whatever
+  // chat was already in progress isn't dropped. On a fresh tab, startup (down at loadLocalModels, below)
+  // dispatches it once local models are listed, rather than racing that.
   function handleIconMode(mode) {
     if (mode !== "work_in_doc") return;   // the other modes just open BOON for now, same as before
     setAgentMode(true);
+    setCreateMode(false);
     if (!controller) send("Read the Google Doc I have open right now and tell me what's in it, then ask what I'd like to add to it.");
   }
-  addEventListener("message", (e) => {
-    if (e.source !== window || e.data?.source !== "boon-icon-tap") return;
-    handleIconMode(e.data.mode);
-  });
+  let pendingIconMode = "";
   if (location.hash.startsWith("#mode=")) {
+    pendingIconMode = decodeURIComponent(location.hash.slice(6));
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+  addEventListener("hashchange", () => {
+    if (!location.hash.startsWith("#mode=")) return;
     const mode = decodeURIComponent(location.hash.slice(6));
     history.replaceState(null, "", location.pathname + location.search);
-    // Deferred: this runs at script load, before agentMode/send below are assigned their initial values.
-    setTimeout(() => handleIconMode(mode), 0);
-  }
+    handleIconMode(mode);
+  });
   // After a reload, pick the running lock back up (or clear a lock the extension already ended).
   async function syncLock() {
     if (!hasLock()) return;
@@ -4636,7 +4640,8 @@ dialog input:focus { border-color: #4a4f8a; }
   renderThread();
   loadLiveModels();
   loadLocalModels().then(() => {
-    if (!store.get("key", "") && !localModels.length) openSettings();
+    if (!store.get("key", "") && !localModels.length) { openSettings(); return; }
+    if (pendingIconMode) handleIconMode(pendingIconMode);
   });
 })();
 </script>

@@ -1,8 +1,11 @@
 // Run via `osascript -l JavaScript open-boon.js [mode]`. Finds an existing Chrome tab already on BOON and
 // focuses it, instead of piling up a new tab every time the floating icon is clicked; opens one only if none
-// exists. An optional mode (e.g. "work_in_doc", from the icon's menu) is passed on to BOON: as a URL hash when
-// opening or launching fresh, since there's nothing yet there to disturb; for a tab that's already open, as a
-// live message instead, since changing its URL would reload it and drop whatever chat was already in progress.
+// exists. An optional mode (e.g. "work_in_doc", from the icon's menu) is passed on to BOON as a URL hash —
+// including on a tab that's already open: same origin and path, only the hash differs, so Chrome treats it
+// as a same-document navigation (BOON picks it up via its own hashchange listener), not a reload. (Tried
+// running JS in the tab directly instead, via Chrome's own "execute javascript" — skipped: it needs View >
+// Developer > "Allow JavaScript from Apple Events" turned on, which is off by default and easy to miss, so
+// the tap would silently do nothing on a fresh Mac.)
 function run(argv) {
   const mode = (argv && argv[0]) || "";
   const hash = mode ? "#mode=" + encodeURIComponent(mode) : "";
@@ -19,10 +22,7 @@ function run(argv) {
           windows[wi].activeTabIndex = ti + 1;
           windows[wi].index = 1;
           Chrome.activate();
-          if (mode) {
-            try { windows[wi].tabs[ti].execute({ javascript: "window.postMessage({source:'boon-icon-tap',mode:" + JSON.stringify(mode) + "},'*');" }); }
-            catch (e) {}
-          }
+          if (mode) tabs[ti].url = url + hash;
           return "focused";
         }
       }
