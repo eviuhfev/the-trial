@@ -413,6 +413,19 @@ function openApp(req) {
   return { app: match };
 }
 
+// The floating desktop icon's own LaunchAgent (set up by desktop-icon/install.sh). kickstart -k starts it if it
+// isn't running and brings it to front either way (main.js always shows its window on launch), covering both
+// "not running at all" and "running but hidden" with the one call. Doesn't touch Chrome or BOON's own server.
+function openIcon() {
+  const app = Application.currentApplication();
+  app.includeStandardAdditions = true;
+  try { app.doShellScript("launchctl kickstart -k gui/$(id -u)/com.boon.icon"); }
+  catch (e) {
+    throw new Error(`Couldn't start the desktop icon (${String((e && e.message) || e)}). Run install.sh in boon/desktop-icon first if you haven't already.`);
+  }
+  return {};
+}
+
 // Opens a real link in Chrome specifically — a real window with the user's own logins, unlike fetch_url's
 // sandboxed curl or browser_open's isolated Chromium. Targets Chrome by name rather than macOS's own "open"
 // (which follows the system default browser — Chrome on this Mac today, but a setting that could change) so
@@ -655,6 +668,7 @@ function dispatch(req) {
   if (req.action === "complete_reminder") return completeReminder(req);
   if (req.action === "create_event") return createEvent(req);
   if (req.action === "open_app") return openApp(req);
+  if (req.action === "open_icon") return openIcon();
   if (req.action === "open_link") return openLink(req);
   if (req.action === "music_control") return musicControl(req);
   if (req.action === "create_note") return createNote(req);
