@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turn off focus</title>
+<style>
+  :root { color-scheme: dark; --bg: #0c0c13; --card: #151522; --text: #e8e8fb; --muted: #a7aac4; --accent: #8fb0ff; --btn: #4f7cff; --bad: #ff8a8a; --good: #7be3a4; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+    background: radial-gradient(1200px 600px at 50% -10%, #1d2140 0%, var(--bg) 60%); color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { width: 100%; max-width: 560px; background: var(--card); border-radius: 22px; padding: 28px 24px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.45), 0 0 0 1px rgba(143,176,255,.2); text-align: center; }
+  .top { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 14px; }
+  .clock { font-size: 22px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .clock.low { color: var(--bad); }
+  h1 { font-size: 18px; font-weight: 600; margin: 14px 0 6px; color: var(--muted); }
+  .question { font-size: 24px; line-height: 1.6; font-weight: 600; margin: 8px 0 12px; overflow-wrap: anywhere; }
+  .question sup { font-size: .65em; }
+  .question sub { font-size: .65em; }
+  .prompt { color: var(--muted); font-size: 14px; margin: 0 0 18px; }
+  form { display: flex; gap: 10px; }
+  input { flex: 1; min-width: 0; font: inherit; font-size: 20px; padding: 12px 14px; border-radius: 14px; border: 1px solid #34375a;
+    background: #0f0f1a; color: var(--text); outline: none; }
+  input:focus { border-color: var(--accent); }
+  button { font: inherit; font-weight: 600; padding: 12px 18px; border-radius: 14px; border: 0; background: var(--btn); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .msg { min-height: 24px; margin-top: 14px; font-weight: 600; }
+  .msg.bad { color: var(--bad); }
+  .msg.good { color: var(--good); }
+  .note { color: var(--muted); font-size: 13px; margin-top: 18px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <main>
+    <div class="top"><span id="tries"></span><span class="clock" id="clock">5:00</span></div>
+    <h1 id="head">Solve this to turn off focus</h1>
+    <div class="question" id="question">Loading…</div>
+    <p class="prompt" id="prompt"></p>
+    <form id="form" autocomplete="off">
+      <input id="answer" inputmode="text" aria-label="Your answer" placeholder="Your answer" autofocus>
+      <button id="submit" type="submit">Check</button>
+    </form>
+    <div class="msg" id="msg" role="status"></div>
+    <p class="note" id="note">Everything else is locked until you answer or the 5 minutes run out. Paper and a pencil are fine.</p>
+  </main>
+  <script src="quiz.js"></script>
+</body>
+</html>
